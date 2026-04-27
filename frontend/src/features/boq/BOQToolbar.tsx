@@ -304,10 +304,13 @@ export function BOQToolbar({
 
       <div className="w-px h-6 bg-border-light hidden sm:block" />
 
-      {/* ── Row-group: Quality & AI ─────────────────────────────────────── */}
+      {/* ── Row-group: hot Quality/AI actions promoted inline ──────────────
+          Validate, Update Rates, AI Chat are the three actions used most
+          often. Everything else (Price Check, Cost Finder, Smart AI) lives
+          in the "Quality & AI" dropdown to the right so the toolbar stays
+          tight on narrow screens. */}
       <div className="flex items-center gap-1.5">
-        <span className="text-2xs font-medium text-content-quaternary uppercase tracking-wider hidden lg:inline ml-1 mr-1">{t('boq.toolbar_quality', { defaultValue: 'Quality' })}</span>
-        {/* Validate: checks data quality, completeness, DIN 276 compliance */}
+        {/* Validate (hot — surfaces score badge inline) */}
         <div className="relative group/validate">
           <Button
             variant="ghost"
@@ -329,148 +332,56 @@ export function BOQToolbar({
               </span>
             )}
           </Button>
-          <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 w-56 rounded-lg bg-gray-900 text-white text-2xs p-2.5 shadow-lg opacity-0 invisible group-hover/validate:opacity-100 group-hover/validate:visible transition-all z-50 pointer-events-none">
-            <p className="font-medium mb-1">{t('boq.validate_tip_title', { defaultValue: 'Quality Check' })}</p>
-            <p className="text-gray-300">{t('boq.validate_tip', { defaultValue: 'Checks for missing descriptions, zero quantities, pricing gaps, classification compliance, and duplicate positions.' })}</p>
-          </div>
         </div>
 
-        {/* Recalculate: enriches resources from cost DB and recalculates unit rates */}
-        <div className="relative group/recalc">
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<RefreshCw size={15} className={isRecalculating ? 'animate-spin text-oe-blue' : ''} />}
-            onClick={onRecalculate}
-            disabled={isRecalculating}
-          >
-            <span className="hidden xl:inline">
-              {isRecalculating
-                ? t('boq.recalculating', { defaultValue: 'Updating...' })
-                : t('boq.recalculate_rates', { defaultValue: 'Update Rates' })
-              }
-            </span>
-          </Button>
-          <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 w-56 rounded-lg bg-gray-900 text-white text-2xs p-2.5 shadow-lg opacity-0 invisible group-hover/recalc:opacity-100 group-hover/recalc:visible transition-all z-50 pointer-events-none">
-            <p className="font-medium mb-1">{t('boq.recalculate_tip_title', { defaultValue: 'Update Unit Rates' })}</p>
-            <p className="text-gray-300">{t('boq.recalculate_tip', { defaultValue: 'Matches positions to cost database, attaches resource breakdowns (materials, labor, equipment), and recalculates unit rates from components.' })}</p>
-          </div>
-        </div>
+        {/* Update Rates (hot) */}
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={<RefreshCw size={15} className={isRecalculating ? 'animate-spin text-oe-blue' : ''} />}
+          onClick={onRecalculate}
+          disabled={isRecalculating}
+          title={t('boq.recalculate_tip', { defaultValue: 'Matches positions to cost database, attaches resource breakdowns (materials, labor, equipment), and recalculates unit rates from components.' })}
+        >
+          <span className="hidden xl:inline">
+            {isRecalculating
+              ? t('boq.recalculating', { defaultValue: 'Updating...' })
+              : t('boq.recalculate_rates', { defaultValue: 'Update Rates' })
+            }
+          </span>
+        </Button>
 
-        {/* Price Check: compares unit rates against cost database */}
-        {onCheckAnomalies && (
-          <div className="relative group/anomaly">
-            {isCheckingAnomalies ? (
-              <div className="flex items-center gap-1">
-                <Button variant="ghost" size="sm" icon={<AlertTriangle size={15} className="animate-pulse text-amber-500" />} disabled>
-                  <span className="hidden xl:inline text-amber-600">
-                    {t('boq.checking_anomalies', { defaultValue: 'Checking...' })}
-                  </span>
-                </Button>
-                {onCancelAnomalies && (
-                  <button
-                    onClick={onCancelAnomalies}
-                    aria-label={t('common.cancel', { defaultValue: 'Cancel' })}
-                    className="rounded-md px-1.5 py-1 text-2xs font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
-                  >
-                    {t('common.cancel', { defaultValue: 'Cancel' })}
-                  </button>
-                )}
-              </div>
-            ) : (
-              <Button
-                variant="ghost"
-                size="sm"
-                icon={<AlertTriangle size={15} className={anomalyCount ? 'text-amber-500' : ''} />}
-                onClick={onCheckAnomalies}
-                className={anomalyCount ? 'text-amber-600 dark:text-amber-400' : ''}
-              >
-                <span className="hidden xl:inline">
-                  {anomalyCount
-                    ? t('boq.anomalies_badge', { defaultValue: 'Anomalies ({{count}})', count: anomalyCount })
-                    : t('boq.price_check', { defaultValue: 'Price Check' })
-                  }
-                </span>
-              </Button>
-            )}
-            <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 w-56 rounded-lg bg-gray-900 text-white text-2xs p-2.5 shadow-lg opacity-0 invisible group-hover/anomaly:opacity-100 group-hover/anomaly:visible transition-all z-50 pointer-events-none">
-              <p className="font-medium mb-1">{t('boq.anomaly_tip_title', { defaultValue: 'Price Benchmark' })}</p>
-              <p className="text-gray-300">{t('boq.anomaly_tip', { defaultValue: 'Compares each unit rate against median market rates from the cost database. Flags overpriced and underpriced positions.' })}</p>
-            </div>
-          </div>
-        )}
-        {anomalyCount !== undefined && anomalyCount > 0 && onAcceptAllAnomalies && (
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<Check size={15} className="text-green-500" />}
-            onClick={onAcceptAllAnomalies}
-            title={t('boq.accept_all_anomaly_suggestions', { defaultValue: 'Accept All Suggested Rates ({{count}})', count: anomalyCount })}
-            className="text-green-600 dark:text-green-400"
-          >
-            <span className="hidden xl:inline">{t('boq.accept_all', { defaultValue: 'Accept All' })}</span>
-          </Button>
-        )}
-        <div className="w-px h-6 bg-border-light hidden sm:block" />
+        {/* AI Chat (hot — the most-discoverable AI entry point) */}
+        <Button
+          variant={aiChatOpen ? 'primary' : 'ghost'}
+          size="sm"
+          icon={<Sparkles size={15} className={aiChatOpen ? '' : 'text-violet-600 dark:text-violet-400'} />}
+          onClick={onToggleAiChat}
+          title={t('boq.ai_assistant_tooltip', { defaultValue: 'Describe what you need in plain text — AI creates BOQ positions with realistic pricing.' })}
+        >
+          <span className="hidden xl:inline">{t('boq.ai_chat_short', { defaultValue: 'AI Chat' })}</span>
+        </Button>
 
-        {/* ── AI Tools (visually grouped) ───────────────────────────────── */}
-        <div className="flex items-center gap-1 rounded-xl bg-gradient-to-r from-violet-50 to-blue-50 dark:from-violet-950/30 dark:to-blue-950/30 border border-violet-200/50 dark:border-violet-800/30 px-2 py-1">
-          {/* Decorative section label (NOT a button) — marked pointer-events-none so the sparkle
-              icon can't be mistaken for an interactive control. Real AI actions are the buttons below. */}
-          <div className="flex items-center gap-1 mr-1 hidden lg:flex pointer-events-none select-none" aria-hidden="true">
-            <Sparkles size={12} className="text-violet-500" />
-            <span className="text-2xs font-bold text-violet-600 dark:text-violet-400 uppercase tracking-wider">AI</span>
-          </div>
-
-          {/* Cost Finder — search cost database */}
-          <div className="relative group/cf">
-            <Button
-              variant={costFinderOpen ? 'primary' : 'ghost'}
-              size="sm"
-              icon={<SearchCheck size={15} className={costFinderOpen ? '' : 'text-blue-600 dark:text-blue-400'} />}
-              onClick={onToggleCostFinder}
-            >
-              <span className="hidden xl:inline">{t('boq.cost_finder_short', { defaultValue: 'Find Costs' })}</span>
-            </Button>
-            <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 w-52 rounded-lg bg-gray-900 text-white text-2xs p-2.5 shadow-lg opacity-0 invisible group-hover/cf:opacity-100 group-hover/cf:visible transition-all z-50 pointer-events-none">
-              <p className="font-semibold mb-1">{t('boq.cost_finder_tip_title', { defaultValue: 'Find Costs in Database' })}</p>
-              <p className="text-gray-300">{t('boq.cost_finder_tooltip', { defaultValue: 'Search 55,000+ cost items by description. Find materials, labor, and equipment rates from regional databases.' })}</p>
-            </div>
-          </div>
-
-          {/* AI Chat — generate positions */}
-          <div className="relative group/chat">
-            <Button
-              variant={aiChatOpen ? 'primary' : 'ghost'}
-              size="sm"
-              icon={<Sparkles size={15} className={aiChatOpen ? '' : 'text-violet-600 dark:text-violet-400'} />}
-              onClick={onToggleAiChat}
-              title={t('boq.ai_assistant_short', { defaultValue: 'AI Chat' })}
-            >
-              <span className="hidden xl:inline">{t('boq.ai_chat_short', { defaultValue: 'AI Chat' })}</span>
-            </Button>
-            <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 w-52 rounded-lg bg-gray-900 text-white text-2xs p-2.5 shadow-lg opacity-0 invisible group-hover/chat:opacity-100 group-hover/chat:visible transition-all z-50 pointer-events-none">
-              <p className="font-semibold mb-1">{t('boq.ai_chat_tip_title', { defaultValue: 'AI Position Generator' })}</p>
-              <p className="text-gray-300">{t('boq.ai_assistant_tooltip', { defaultValue: 'Describe what you need in plain text — AI creates BOQ positions with realistic pricing.' })}</p>
-            </div>
-          </div>
-
-          {/* Smart AI — analysis tools */}
-          <div className="relative group/smart">
-            <Button
-              variant={smartPanelOpen ? 'primary' : 'ghost'}
-              size="sm"
-              icon={<Brain size={15} className={smartPanelOpen ? '' : 'text-fuchsia-600 dark:text-fuchsia-400'} />}
-              onClick={onToggleSmartPanel}
-            >
-              <span className="hidden xl:inline">{t('boq.ai_smart_short', { defaultValue: 'Analyze' })}</span>
-            </Button>
-            <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 w-52 rounded-lg bg-gray-900 text-white text-2xs p-2.5 shadow-lg opacity-0 invisible group-hover/smart:opacity-100 group-hover/smart:visible transition-all z-50 pointer-events-none">
-              <p className="font-semibold mb-1">{t('boq.ai_smart_tip_title', { defaultValue: 'AI Analysis & Optimization' })}</p>
-              <p className="text-gray-300">{t('boq.ai_smart_tooltip', { defaultValue: 'Enhance descriptions, find missing items, check scope completeness, escalate rates to current prices.' })}</p>
-            </div>
-          </div>
-        </div>
+        {/* "Quality & AI" pill — opens a popover with the full action list. */}
+        <QualityAiMenu
+          t={t}
+          onValidate={onValidate}
+          isValidating={isValidating}
+          lastValidationScore={lastValidationScore}
+          onRecalculate={onRecalculate}
+          isRecalculating={isRecalculating}
+          onCheckAnomalies={onCheckAnomalies}
+          onCancelAnomalies={onCancelAnomalies}
+          isCheckingAnomalies={isCheckingAnomalies}
+          anomalyCount={anomalyCount}
+          onAcceptAllAnomalies={onAcceptAllAnomalies}
+          aiChatOpen={aiChatOpen}
+          onToggleAiChat={onToggleAiChat}
+          costFinderOpen={costFinderOpen}
+          onToggleCostFinder={onToggleCostFinder}
+          smartPanelOpen={smartPanelOpen}
+          onToggleSmartPanel={onToggleSmartPanel}
+        />
 
         {/* ── Keyboard Shortcuts Button ────────────────────────────────── */}
         {onShowShortcuts && (
@@ -487,5 +398,228 @@ export function BOQToolbar({
         )}
       </div>
     </div>
+  );
+}
+
+/* ── Quality & AI dropdown menu ──────────────────────────────────────────
+   Single pill button that opens a panel listing the full set of quality
+   and AI actions. The three hottest actions (Validate, Update Rates, AI
+   Chat) stay inline in the toolbar; this menu is for the rest plus a
+   complete reference of every action available on this BOQ. */
+
+interface QualityAiMenuProps {
+  t: (key: string, options?: Record<string, string | number>) => string;
+  onValidate: () => void;
+  isValidating?: boolean;
+  lastValidationScore?: number | null;
+  onRecalculate: () => void;
+  isRecalculating: boolean;
+  onCheckAnomalies?: () => void;
+  onCancelAnomalies?: () => void;
+  isCheckingAnomalies?: boolean;
+  anomalyCount?: number;
+  onAcceptAllAnomalies?: () => void;
+  aiChatOpen: boolean;
+  onToggleAiChat: () => void;
+  costFinderOpen: boolean;
+  onToggleCostFinder: () => void;
+  smartPanelOpen: boolean;
+  onToggleSmartPanel: () => void;
+}
+
+function QualityAiMenu(props: QualityAiMenuProps) {
+  const {
+    t,
+    onValidate,
+    isValidating,
+    lastValidationScore,
+    onRecalculate,
+    isRecalculating,
+    onCheckAnomalies,
+    onCancelAnomalies,
+    isCheckingAnomalies,
+    anomalyCount,
+    onAcceptAllAnomalies,
+    aiChatOpen,
+    onToggleAiChat,
+    costFinderOpen,
+    onToggleCostFinder,
+    smartPanelOpen,
+    onToggleSmartPanel,
+  } = props;
+  const [open, setOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  // Run the action and dismiss the menu — toggles like AI Chat keep the
+  // panel open in case the user wants a follow-up flip; CTAs (Validate,
+  // Update Rates, Price Check) close it because they kick off a single
+  // background job that takes over the screen.
+  const fire = (cb: () => void, dismiss: boolean = true) => () => {
+    cb();
+    if (dismiss) setOpen(false);
+  };
+
+  return (
+    <div ref={wrapperRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        title={t('boq.quality_ai_menu_tip', { defaultValue: 'All quality & AI tools' })}
+        className={`flex items-center gap-1.5 px-2.5 h-7 rounded-lg border text-2xs font-semibold uppercase tracking-wider transition-colors ${
+          open
+            ? 'bg-violet-100 dark:bg-violet-900/40 border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-200'
+            : 'bg-gradient-to-r from-violet-50 to-blue-50 dark:from-violet-950/30 dark:to-blue-950/30 border-violet-200/50 dark:border-violet-800/30 text-violet-700 dark:text-violet-300 hover:from-violet-100 hover:to-blue-100 dark:hover:from-violet-900/40'
+        }`}
+      >
+        <Sparkles size={13} className="text-violet-500" />
+        <span className="hidden lg:inline">{t('boq.quality_ai_menu', { defaultValue: 'Quality & AI' })}</span>
+        <ChevronDown size={11} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div
+          role="menu"
+          aria-label={t('boq.quality_ai_menu', { defaultValue: 'Quality & AI' })}
+          className="absolute right-0 top-full mt-2 w-72 rounded-xl shadow-2xl border border-border-light dark:border-border-dark bg-white dark:bg-surface-elevated overflow-hidden animate-card-in z-50"
+        >
+          {/* Quality section */}
+          <div className="px-3 pt-2.5 pb-1 border-b border-border-light dark:border-border-dark bg-surface-secondary/30">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-content-quaternary">
+              {t('boq.toolbar_quality', { defaultValue: 'Quality' })}
+            </span>
+          </div>
+          <div className="py-1">
+            <MenuRow
+              icon={<ShieldCheck size={14} className={isValidating ? 'animate-pulse text-oe-blue' : lastValidationScore != null ? (lastValidationScore >= 80 ? 'text-emerald-500' : lastValidationScore >= 50 ? 'text-amber-500' : 'text-red-500') : 'text-content-tertiary'} />}
+              label={isValidating ? t('boq.validating', { defaultValue: 'Checking...' }) : t('boq.validate', { defaultValue: 'Validate' })}
+              hint={t('boq.validate_tip', { defaultValue: 'Checks for missing descriptions, zero quantities, pricing gaps, classification compliance, and duplicate positions.' })}
+              trailing={lastValidationScore != null && !isValidating ? (
+                <span className={`text-2xs font-bold tabular-nums ${lastValidationScore >= 80 ? 'text-emerald-600' : lastValidationScore >= 50 ? 'text-amber-600' : 'text-red-600'}`}>
+                  {lastValidationScore}%
+                </span>
+              ) : null}
+              onClick={fire(onValidate)}
+              disabled={isValidating}
+            />
+            <MenuRow
+              icon={<RefreshCw size={14} className={isRecalculating ? 'animate-spin text-oe-blue' : 'text-content-tertiary'} />}
+              label={isRecalculating ? t('boq.recalculating', { defaultValue: 'Updating...' }) : t('boq.recalculate_rates', { defaultValue: 'Update Rates' })}
+              hint={t('boq.recalculate_tip', { defaultValue: 'Matches positions to cost database, attaches resource breakdowns (materials, labor, equipment), and recalculates unit rates from components.' })}
+              onClick={fire(onRecalculate)}
+              disabled={isRecalculating}
+            />
+            {onCheckAnomalies && (
+              <MenuRow
+                icon={<AlertTriangle size={14} className={anomalyCount ? 'text-amber-500' : isCheckingAnomalies ? 'animate-pulse text-amber-500' : 'text-content-tertiary'} />}
+                label={isCheckingAnomalies
+                  ? t('boq.checking_anomalies', { defaultValue: 'Checking...' })
+                  : anomalyCount
+                    ? t('boq.anomalies_badge', { defaultValue: 'Anomalies ({{count}})', count: anomalyCount })
+                    : t('boq.price_check', { defaultValue: 'Price Check' })}
+                hint={t('boq.anomaly_tip', { defaultValue: 'Compares each unit rate against median market rates from the cost database. Flags overpriced and underpriced positions.' })}
+                onClick={isCheckingAnomalies && onCancelAnomalies ? fire(onCancelAnomalies) : fire(onCheckAnomalies)}
+                trailing={isCheckingAnomalies && onCancelAnomalies ? (
+                  <span className="text-2xs font-medium text-red-500">{t('common.cancel', { defaultValue: 'Cancel' })}</span>
+                ) : null}
+              />
+            )}
+            {anomalyCount !== undefined && anomalyCount > 0 && onAcceptAllAnomalies && (
+              <MenuRow
+                icon={<Check size={14} className="text-green-500" />}
+                label={t('boq.accept_all_anomaly_suggestions', { defaultValue: 'Accept All Suggested Rates ({{count}})', count: anomalyCount })}
+                onClick={fire(onAcceptAllAnomalies)}
+              />
+            )}
+          </div>
+
+          {/* AI section */}
+          <div className="px-3 pt-2.5 pb-1 border-b border-t border-border-light dark:border-border-dark bg-gradient-to-r from-violet-50/40 to-blue-50/40 dark:from-violet-950/20 dark:to-blue-950/20">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-violet-700 dark:text-violet-300 inline-flex items-center gap-1">
+              <Sparkles size={10} /> AI
+            </span>
+          </div>
+          <div className="py-1">
+            <MenuRow
+              icon={<SearchCheck size={14} className={costFinderOpen ? 'text-blue-600' : 'text-content-tertiary'} />}
+              label={t('boq.cost_finder_short', { defaultValue: 'Find Costs' })}
+              hint={t('boq.cost_finder_tooltip', { defaultValue: 'Search 55,000+ cost items by description. Find materials, labor, and equipment rates from regional databases.' })}
+              active={costFinderOpen}
+              onClick={fire(onToggleCostFinder, false)}
+            />
+            <MenuRow
+              icon={<Sparkles size={14} className={aiChatOpen ? 'text-violet-600' : 'text-content-tertiary'} />}
+              label={t('boq.ai_chat_short', { defaultValue: 'AI Chat' })}
+              hint={t('boq.ai_assistant_tooltip', { defaultValue: 'Describe what you need in plain text — AI creates BOQ positions with realistic pricing.' })}
+              active={aiChatOpen}
+              onClick={fire(onToggleAiChat, false)}
+            />
+            <MenuRow
+              icon={<Brain size={14} className={smartPanelOpen ? 'text-fuchsia-600' : 'text-content-tertiary'} />}
+              label={t('boq.ai_smart_short', { defaultValue: 'Analyze' })}
+              hint={t('boq.ai_smart_tooltip', { defaultValue: 'Enhance descriptions, find missing items, check scope completeness, escalate rates to current prices.' })}
+              active={smartPanelOpen}
+              onClick={fire(onToggleSmartPanel, false)}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface MenuRowProps {
+  icon: React.ReactNode;
+  label: string;
+  hint?: string;
+  active?: boolean;
+  disabled?: boolean;
+  trailing?: React.ReactNode;
+  onClick: () => void;
+}
+
+function MenuRow({ icon, label, hint, active, disabled, trailing, onClick }: MenuRowProps) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      disabled={disabled}
+      className={`w-full text-left px-3 py-2 flex items-start gap-2.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+        active
+          ? 'bg-violet-50 dark:bg-violet-950/30 hover:bg-violet-100 dark:hover:bg-violet-900/40'
+          : 'hover:bg-surface-secondary'
+      }`}
+    >
+      <span className="shrink-0 mt-0.5">{icon}</span>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center justify-between gap-2">
+          <span className={`text-xs font-medium ${active ? 'text-violet-700 dark:text-violet-200' : 'text-content-primary'}`}>
+            {label}
+          </span>
+          {trailing}
+        </div>
+        {hint && (
+          <div className="text-[10px] text-content-tertiary leading-snug mt-0.5 line-clamp-2">
+            {hint}
+          </div>
+        )}
+      </div>
+    </button>
   );
 }

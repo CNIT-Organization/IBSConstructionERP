@@ -18,15 +18,24 @@ import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ClipboardList, Download, Edit3, Package, Search } from 'lucide-react';
+import {
+  ArrowUpRight,
+  ClipboardList,
+  Cuboid,
+  Download,
+  Edit3,
+  Package,
+  Search,
+} from 'lucide-react';
 
 import { Badge, Breadcrumb, Button, Card, EmptyState, Input } from '@/shared/ui';
 import { useProjectContextStore } from '@/stores/useProjectContextStore';
 import { useToastStore } from '@/stores/useToastStore';
 
+import { AssetDetailDrawer } from './AssetDetailDrawer';
 import { AssetEditModal } from './AssetEditModal';
 import {
-  cobieExportUrl,
+  downloadCobieXlsx,
   listTrackedAssets,
   type AssetSummary,
 } from './api';
@@ -61,6 +70,7 @@ export function AssetsPage() {
   const status = searchParams.get('status') ?? '';
 
   const [editing, setEditing] = useState<AssetSummary | null>(null);
+  const [detailing, setDetailing] = useState<AssetSummary | null>(null);
 
   const patchSearch = useCallback(
     (next: Partial<Record<'search' | 'status', string>>) => {
@@ -126,13 +136,13 @@ export function AssetsPage() {
       {/* ── Header ───────────────────────────────────────────────────── */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <ClipboardList size={22} className="text-primary-400" />
-          <h1 className="text-2xl font-semibold text-neutral-100">
+          <ClipboardList size={22} className="text-oe-blue" />
+          <h1 className="text-2xl font-semibold text-content-primary">
             {t('assets.title', { defaultValue: 'Asset Register' })}
           </h1>
           <Badge variant="neutral">{total}</Badge>
         </div>
-        <div className="text-sm text-neutral-400">
+        <div className="text-sm text-content-secondary">
           {t('assets.subtitle', {
             defaultValue: 'Equipment, fixtures and systems extracted from your BIM models.',
           })}
@@ -145,7 +155,7 @@ export function AssetsPage() {
           <div className="relative flex-1 min-w-[200px]">
             <Search
               size={16}
-              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500"
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-content-tertiary"
             />
             <Input
               value={search}
@@ -163,8 +173,8 @@ export function AssetsPage() {
               onClick={() => patchSearch({ status: '' })}
               className={`rounded-md border px-3 py-1 text-xs ${
                 status === ''
-                  ? 'border-primary-500 bg-primary-500/15 text-primary-200'
-                  : 'border-neutral-700 text-neutral-300 hover:bg-neutral-800'
+                  ? 'border-oe-blue bg-oe-blue/10 text-oe-blue'
+                  : 'border-border-medium text-content-secondary hover:bg-surface-secondary'
               }`}
               data-testid="asset-status-all"
             >
@@ -177,8 +187,8 @@ export function AssetsPage() {
                 onClick={() => patchSearch({ status: s.value })}
                 className={`rounded-md border px-3 py-1 text-xs ${
                   status === s.value
-                    ? 'border-primary-500 bg-primary-500/15 text-primary-200'
-                    : 'border-neutral-700 text-neutral-300 hover:bg-neutral-800'
+                    ? 'border-oe-blue bg-oe-blue/10 text-oe-blue'
+                    : 'border-border-medium text-content-secondary hover:bg-surface-secondary'
                 }`}
                 data-testid={`asset-status-${s.value}`}
               >
@@ -192,7 +202,7 @@ export function AssetsPage() {
       {/* ── Table ───────────────────────────────────────────────────── */}
       <Card className="flex-1 overflow-auto">
         {assetsQuery.isLoading ? (
-          <div className="p-6 text-sm text-neutral-400">
+          <div className="p-6 text-sm text-content-secondary">
             {t('common.loading', { defaultValue: 'Loading…' })}
           </div>
         ) : items.length === 0 ? (
@@ -211,8 +221,9 @@ export function AssetsPage() {
           />
         ) : (
           <table className="w-full text-sm" data-testid="asset-table">
-            <thead className="sticky top-0 bg-neutral-900/95 text-xs uppercase tracking-wider text-neutral-400">
+            <thead className="sticky top-0 z-10 bg-surface-primary text-xs uppercase tracking-wider text-content-tertiary shadow-sm">
               <tr>
+                <th className="w-10 px-2 py-2"></th>
                 <th className="px-3 py-2 text-left">{t('assets.col.element', { defaultValue: 'Element' })}</th>
                 <th className="px-3 py-2 text-left">{t('assets.col.manufacturer', { defaultValue: 'Manufacturer' })}</th>
                 <th className="px-3 py-2 text-left">{t('assets.col.model', { defaultValue: 'Model' })}</th>
@@ -227,23 +238,43 @@ export function AssetsPage() {
               {items.map((asset) => (
                 <tr
                   key={asset.id}
-                  className="border-t border-neutral-800 hover:bg-neutral-800/30"
+                  className="cursor-pointer border-t border-border-light transition-colors hover:bg-surface-secondary"
                   data-testid={`asset-row-${asset.id}`}
+                  onClick={() => setDetailing(asset)}
                 >
+                  <td className="px-2 py-2">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDetailing(asset);
+                      }}
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border-medium text-oe-blue hover:border-oe-blue hover:bg-oe-blue/10"
+                      title={t('assets.view_geometry', {
+                        defaultValue: 'View geometry & properties',
+                      })}
+                      aria-label={t('assets.view_geometry', {
+                        defaultValue: 'View geometry & properties',
+                      })}
+                      data-testid={`asset-view-${asset.id}`}
+                    >
+                      <Cuboid size={14} />
+                    </button>
+                  </td>
                   <td className="px-3 py-2">
-                    <div className="font-medium text-neutral-100">
+                    <div className="font-medium text-content-primary">
                       {asset.name || asset.element_type}
                     </div>
-                    <div className="text-xs text-neutral-500">{asset.stable_id}</div>
+                    <div className="text-xs text-content-tertiary">{asset.stable_id}</div>
                   </td>
-                  <td className="px-3 py-2 text-neutral-200">
-                    {asset.asset_info.manufacturer ?? <span className="text-neutral-600">—</span>}
+                  <td className="px-3 py-2 text-content-primary">
+                    {asset.asset_info.manufacturer ?? <span className="text-content-quaternary">—</span>}
                   </td>
-                  <td className="px-3 py-2 text-neutral-200">
-                    {asset.asset_info.model ?? <span className="text-neutral-600">—</span>}
+                  <td className="px-3 py-2 text-content-primary">
+                    {asset.asset_info.model ?? <span className="text-content-quaternary">—</span>}
                   </td>
-                  <td className="px-3 py-2 font-mono text-xs text-neutral-300">
-                    {asset.asset_info.serial_number ?? <span className="text-neutral-600">—</span>}
+                  <td className="px-3 py-2 font-mono text-xs text-content-secondary">
+                    {asset.asset_info.serial_number ?? <span className="text-content-quaternary">—</span>}
                   </td>
                   <td className="px-3 py-2">
                     {asset.asset_info.operational_status ? (
@@ -255,30 +286,52 @@ export function AssetsPage() {
                         {asset.asset_info.operational_status.replace('_', ' ')}
                       </span>
                     ) : (
-                      <span className="text-neutral-600">—</span>
+                      <span className="text-content-quaternary">—</span>
                     )}
                   </td>
-                  <td className="px-3 py-2 text-neutral-300">
-                    {asset.asset_info.warranty_until ?? <span className="text-neutral-600">—</span>}
+                  <td className="px-3 py-2 text-content-secondary">
+                    {asset.asset_info.warranty_until ?? <span className="text-content-quaternary">—</span>}
                   </td>
                   <td className="px-3 py-2">
                     <button
                       type="button"
-                      onClick={() => navigate(`/bim/${asset.model_id}?element=${asset.id}`)}
-                      className="text-primary-300 hover:underline"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/bim/${asset.model_id}?element=${asset.id}`);
+                      }}
+                      className="inline-flex items-center gap-1 text-oe-blue hover:underline"
+                      title={t('assets.open_in_bim', {
+                        defaultValue: 'Open in 3D Viewer',
+                      })}
                     >
                       {asset.model_name}
+                      <ArrowUpRight size={12} className="opacity-60" />
                     </button>
                     {' '}
-                    <a
-                      href={cobieExportUrl(asset.model_id)}
-                      className="ml-2 inline-flex items-center gap-1 text-xs text-neutral-400 hover:text-primary-300"
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        downloadCobieXlsx(
+                          asset.model_id,
+                          `${asset.model_name || 'model'}-cobie.xlsx`,
+                        ).catch((err) => {
+                          toast({
+                            type: 'error',
+                            title: t('assets.cobie_failed', {
+                              defaultValue: 'COBie export failed',
+                            }),
+                            message: err instanceof Error ? err.message : undefined,
+                          });
+                        });
+                      }}
+                      className="ml-2 inline-flex items-center gap-1 text-xs text-content-tertiary hover:text-oe-blue"
                       title={t('assets.cobie_export', { defaultValue: 'Download COBie (XLSX)' })}
                     >
                       <Download size={12} /> COBie
-                    </a>
+                    </button>
                   </td>
-                  <td className="px-3 py-2 text-right">
+                  <td className="px-3 py-2 text-right" onClick={(e) => e.stopPropagation()}>
                     <Button
                       variant="secondary"
                       size="sm"
@@ -307,6 +360,13 @@ export function AssetsPage() {
             });
             setEditing(null);
           }}
+        />
+      )}
+
+      {detailing && (
+        <AssetDetailDrawer
+          asset={detailing}
+          onClose={() => setDetailing(null)}
         />
       )}
     </div>

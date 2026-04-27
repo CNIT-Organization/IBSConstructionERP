@@ -1396,13 +1396,22 @@ function PdfDwgSourcePopover(props: PdfDwgSourcePopoverProps) {
     if (!canApply || measurementValue === null) return;
     const id = positionData!.id as string;
     const oldMeta = meta;
+    // Build a provenance label using the same shape the picker / takeoff
+    // module use, so the quantity-cell icon and unit-cell short label both
+    // appear (cellRenderers QuantityCellRenderer/UnitCellRenderer key off
+    // ``pdf_measurement_source`` / ``dwg_annotation_source``).
+    const label =
+      kind === 'pdf'
+        ? `Takeoff: ${sourceName ?? measurementType ?? 'measurement'}${page != null ? ` (page ${page})` : ''}`
+        : `DWG: ${sourceName ?? measurementType ?? 'annotation'}`;
+    const linkKey = kind === 'pdf' ? 'pdf_measurement_source' : 'dwg_annotation_source';
     onApplyQuantity!(
       id,
       {
         quantity: measurementValue,
         metadata: {
           ...oldMeta,
-          qty_source: kind === 'pdf' ? 'pdf_takeoff' : 'dwg_annotation',
+          [linkKey]: label,
         },
       },
       { ...positionData, quantity: positionData?.quantity },
@@ -2090,6 +2099,7 @@ export function QuantityCellRenderer(params: ICellRendererParams) {
   const meta = (data.metadata ?? {}) as Record<string, unknown>;
   const hasBimSource = !!meta.bim_qty_source;
   const hasPdfSource = !!meta.pdf_measurement_source;
+  const hasDwgSource = !!meta.dwg_annotation_source;
   const formulaSource = typeof meta.formula === 'string' ? meta.formula : null;
 
   let colorClass = '';
@@ -2097,6 +2107,9 @@ export function QuantityCellRenderer(params: ICellRendererParams) {
   if (hasPdfSource) {
     colorClass = 'font-semibold text-rose-700 dark:text-rose-400';
     titleText = String(meta.pdf_measurement_source);
+  } else if (hasDwgSource) {
+    colorClass = 'font-semibold text-amber-700 dark:text-amber-400';
+    titleText = String(meta.dwg_annotation_source);
   } else if (hasBimSource) {
     colorClass = 'font-semibold text-emerald-700 dark:text-emerald-400';
     titleText = String(meta.bim_qty_source);
@@ -2112,7 +2125,7 @@ export function QuantityCellRenderer(params: ICellRendererParams) {
   // number on the right, and the original formula string surfaced in the
   // browser tooltip. Click → re-enter edit mode and the FormulaCellEditor
   // pre-fills with the source formula (not the resolved number).
-  if (formulaSource && !hasBimSource && !hasPdfSource) {
+  if (formulaSource && !hasBimSource && !hasPdfSource && !hasDwgSource) {
     return (
       <span
         className="relative flex items-center justify-end gap-1 w-full h-full text-xs tabular-nums leading-[32px]"
@@ -2129,10 +2142,11 @@ export function QuantityCellRenderer(params: ICellRendererParams) {
     );
   }
 
-  // Source badge: BIM-sourced cells get a small Cuboid icon, PDF-sourced
-  // cells get a Ruler icon — makes provenance scannable at a glance.
-  if (hasBimSource || hasPdfSource) {
-    const Icon = hasBimSource ? Cuboid : Ruler;
+  // Source badge: BIM → Cuboid, PDF → Ruler, DWG → FileBox. Same icons used
+  // by the link-buttons next to the description column so provenance is
+  // visually consistent across the grid.
+  if (hasBimSource || hasPdfSource || hasDwgSource) {
+    const Icon = hasBimSource ? Cuboid : hasPdfSource ? Ruler : FileBox;
     return (
       <span
         className={`flex items-center justify-end gap-1 w-full h-full text-xs tabular-nums leading-[32px] ${colorClass}`}
@@ -2167,9 +2181,10 @@ export function UnitCellRenderer(params: ICellRendererParams) {
   const meta = (data.metadata ?? {}) as Record<string, unknown>;
   const bimSource = meta.bim_qty_source as string | undefined;
   const pdfSource = meta.pdf_measurement_source as string | undefined;
+  const dwgSource = meta.dwg_annotation_source as string | undefined;
 
   // No source indicator needed
-  if (!bimSource && !pdfSource) {
+  if (!bimSource && !pdfSource && !dwgSource) {
     return <span className="text-center text-2xs font-mono w-full block">{value ?? ''}</span>;
   }
 
@@ -2183,6 +2198,23 @@ export function UnitCellRenderer(params: ICellRendererParams) {
         <span
           className="text-[7px] leading-none font-medium text-rose-600 dark:text-rose-400 truncate max-w-full"
           title={pdfSource}
+        >
+          {shortLabel}
+        </span>
+      </div>
+    );
+  }
+
+  if (dwgSource) {
+    // Extract short label: "DWG: Area annotation" -> "annotation" (last token).
+    const parts = dwgSource.split(/[:/]/);
+    const shortLabel = (parts[parts.length - 1] ?? dwgSource).trim();
+    return (
+      <div className="flex flex-col items-center justify-center h-full w-full gap-0">
+        <span className="text-2xs font-mono leading-tight">{value ?? ''}</span>
+        <span
+          className="text-[7px] leading-none font-medium text-amber-600 dark:text-amber-400 truncate max-w-full"
+          title={dwgSource}
         >
           {shortLabel}
         </span>

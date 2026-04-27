@@ -346,7 +346,7 @@ export function UpdateNotification({ forceShow = false, hideDismiss = false }: U
             <div className="flex-1 min-w-0 leading-tight">
               <div className="flex items-baseline gap-1.5">
                 <span className="text-xs font-bold text-blue-900 dark:text-sky-100 tabular-nums">
-                  v{release.version}
+                  v{CURRENT_VERSION} → v{release.version}
                 </span>
                 <span className="text-[9px] font-semibold uppercase tracking-wider text-blue-600 dark:text-sky-300">
                   {t('update.new_available', { defaultValue: 'available' })}
@@ -358,9 +358,10 @@ export function UpdateNotification({ forceShow = false, hideDismiss = false }: U
                   <>
                     {relativeDate && <span aria-hidden="true">·</span>}
                     <span>
-                      {t('update.changes_count', {
-                        defaultValue: '{{count}} changes',
+                      {t('update.changes_count_in', {
+                        defaultValue: '{{count}} changes in v{{version}}',
                         count: grouped.totalCount,
+                        version: release.version,
                       })}
                     </span>
                   </>

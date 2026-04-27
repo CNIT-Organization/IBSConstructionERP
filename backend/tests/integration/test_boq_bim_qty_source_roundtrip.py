@@ -177,3 +177,106 @@ async def test_manual_quantity_edit_strips_existing_bim_qty_source(
         "Pure quantity edit must strip existing bim_qty_source — got: "
         f"{body['metadata']}"
     )
+
+
+@pytest.mark.asyncio
+async def test_pdf_picker_preserves_pdf_measurement_source(
+    shared_client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    """PDF takeoff popover sends ``pdf_measurement_source`` alongside qty —
+    the strip pass must preserve it, otherwise the icon disappears after
+    the response replaces the optimistic cache write."""
+    proj = await shared_client.post(
+        "/api/v1/projects/",
+        json={"name": "PDF Source Roundtrip"},
+        headers=auth_headers,
+    )
+    project_id = proj.json()["id"]
+    boq = await shared_client.post(
+        "/api/v1/boq/boqs/",
+        json={"project_id": project_id, "name": "B"},
+        headers=auth_headers,
+    )
+    boq_id = boq.json()["id"]
+    pos = await shared_client.post(
+        f"/api/v1/boq/boqs/{boq_id}/positions/",
+        json={
+            "boq_id": boq_id,
+            "ordinal": "01.003",
+            "description": "Floor",
+            "unit": "m2",
+            "quantity": 0,
+            "unit_rate": 0,
+        },
+        headers=auth_headers,
+    )
+    position_id = pos.json()["id"]
+
+    patch = await shared_client.patch(
+        f"/api/v1/boq/positions/{position_id}",
+        json={
+            "quantity": 75.5,
+            "metadata": {"pdf_measurement_source": "Takeoff: Area (page 3)"},
+        },
+        headers=auth_headers,
+    )
+    assert patch.status_code == 200, patch.text
+    body = patch.json()
+    assert (
+        body["metadata"].get("pdf_measurement_source") == "Takeoff: Area (page 3)"
+    ), f"PATCH response stripped pdf_measurement_source: metadata={body['metadata']}"
+
+
+@pytest.mark.asyncio
+async def test_dwg_picker_preserves_dwg_annotation_source(
+    shared_client: AsyncClient, auth_headers: dict[str, str]
+) -> None:
+    """DWG popover sends ``dwg_annotation_source`` alongside qty — the
+    strip pass must preserve it. Mirror of the BIM/PDF cases."""
+    proj = await shared_client.post(
+        "/api/v1/projects/",
+        json={"name": "DWG Source Roundtrip"},
+        headers=auth_headers,
+    )
+    project_id = proj.json()["id"]
+    boq = await shared_client.post(
+        "/api/v1/boq/boqs/",
+        json={"project_id": project_id, "name": "B"},
+        headers=auth_headers,
+    )
+    boq_id = boq.json()["id"]
+    pos = await shared_client.post(
+        f"/api/v1/boq/boqs/{boq_id}/positions/",
+        json={
+            "boq_id": boq_id,
+            "ordinal": "01.004",
+            "description": "Slab",
+            "unit": "m2",
+            "quantity": 0,
+            "unit_rate": 0,
+        },
+        headers=auth_headers,
+    )
+    position_id = pos.json()["id"]
+
+    patch = await shared_client.patch(
+        f"/api/v1/boq/positions/{position_id}",
+        json={
+            "quantity": 120.0,
+            "metadata": {"dwg_annotation_source": "DWG: Slab outline"},
+        },
+        headers=auth_headers,
+    )
+    assert patch.status_code == 200, patch.text
+    body = patch.json()
+    assert (
+        body["metadata"].get("dwg_annotation_source") == "DWG: Slab outline"
+    ), f"PATCH response stripped dwg_annotation_source: metadata={body['metadata']}"
+
+    get = await shared_client.get(
+        f"/api/v1/boq/positions/{position_id}", headers=auth_headers
+    )
+    fresh = get.json()
+    assert (
+        fresh["metadata"].get("dwg_annotation_source") == "DWG: Slab outline"
+    ), f"GET after PATCH lost dwg_annotation_source: metadata={fresh['metadata']}"

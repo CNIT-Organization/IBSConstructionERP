@@ -48,6 +48,8 @@ import {
   Layers,
   List,
   X,
+  Check,
+  AlertTriangle,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useToastStore } from '../../stores/useToastStore';
@@ -2659,9 +2661,9 @@ export default function TakeoffViewerModule({
               <button onClick={prevPage} disabled={currentPage <= 1} className="p-1.5 rounded hover:bg-surface-secondary disabled:opacity-30 transition-colors" aria-label={t('takeoff_viewer.prev_page', { defaultValue: 'Previous page' })}>
                 <ChevronLeft size={16} />
               </button>
-              <details className="relative" data-testid="page-jump">
-                <summary className="text-xs text-content-secondary tabular-nums px-1 cursor-pointer hover:text-content-primary list-none select-none" title={t('takeoff_viewer.jump_to_page', { defaultValue: 'Click to jump to a page' })}>
-                  {currentPage} / {totalPages}
+              <details className="relative shrink-0" data-testid="page-jump">
+                <summary className="text-xs text-content-secondary tabular-nums px-1 cursor-pointer hover:text-content-primary list-none select-none whitespace-nowrap" title={t('takeoff_viewer.jump_to_page', { defaultValue: 'Click to jump to a page' })}>
+                  {currentPage}/{totalPages}
                 </summary>
                 {totalPages > 1 && (
                   <div className="absolute left-0 top-full mt-1 z-30 max-h-72 w-44 overflow-y-auto rounded-lg border border-border bg-surface-elevated shadow-lg p-1">
@@ -2795,39 +2797,36 @@ export default function TakeoffViewerModule({
                 <span className="hidden sm:inline">{t('takeoff_viewer.calibrate', { defaultValue: 'Calibrate' })}</span>
               </button>
 
-              {/* Calibration status badge — shows the active ratio + real length. */}
+              {/* Calibration status badge — compact: ratio · length, no
+                  "Calibrated" word (the green tick implies it). One line. */}
               {isCalibrated && !calibrationMode && !settingScale && (
                 <button
                   onClick={handleStartCalibration}
-                  className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 hover:bg-purple-200 dark:hover:bg-purple-900/50 transition-colors border border-purple-300/50 dark:border-purple-700/50"
-                  title={t('takeoff_viewer.recalibrate', { defaultValue: 'Recalibrate scale' })}
+                  className="flex items-center gap-1 px-1.5 py-1 rounded text-[10px] font-mono whitespace-nowrap shrink-0 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 hover:bg-purple-200 dark:hover:bg-purple-900/50 transition-colors border border-purple-300/50 dark:border-purple-700/50"
+                  title={t('takeoff_viewer.calibrated_tooltip', {
+                    defaultValue: 'Calibrated · {{ratio}}{{atLen}} — click to recalibrate',
+                    ratio: formatScaleRatio(scale),
+                    atLen: lastCalibration ? ` @ ${lastCalibration.realLength.toFixed(2)} m` : '',
+                  })}
                   data-testid="calibration-badge"
                 >
-                  <span className="font-semibold">Calibrated</span>
-                  <span className="text-purple-500">·</span>
+                  <Check size={11} className="text-purple-500 shrink-0" />
                   <span>{formatScaleRatio(scale)}</span>
                   {lastCalibration && (
-                    <>
-                      <span className="text-purple-500">@</span>
-                      <span>{lastCalibration.realLength.toFixed(2)} m</span>
-                    </>
+                    <span className="text-purple-500/80">· {lastCalibration.realLength.toFixed(1)}m</span>
                   )}
                 </button>
               )}
-              {/* Uncalibrated warning — clickable shortcut to start calibration.
-                  Without this banner users would silently log measurements in
-                  raw pixel units (or whatever the PDF arrived in) and only
-                  notice the wrongness once values look implausible. */}
+              {/* Uncalibrated warning — shortened to a single chip. */}
               {!isCalibrated && !calibrationMode && !settingScale && (
                 <button
                   onClick={handleStartCalibration}
-                  className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900/50 transition-colors border border-amber-300/50 dark:border-amber-700/50"
+                  className="flex items-center gap-1 px-1.5 py-1 rounded text-[10px] font-mono whitespace-nowrap shrink-0 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900/50 transition-colors border border-amber-300/50 dark:border-amber-700/50"
                   title={t('takeoff_viewer.uncalibrated_hint', { defaultValue: 'Drawing is not calibrated — measurements may be inaccurate. Click to calibrate.' })}
                   data-testid="uncalibrated-badge"
                 >
-                  <span className="font-semibold">Not calibrated</span>
-                  <span className="text-amber-500">·</span>
-                  <span>{t('takeoff_viewer.click_to_fix', { defaultValue: 'click to fix' })}</span>
+                  <AlertTriangle size={11} className="text-amber-500 shrink-0" />
+                  <span>{t('takeoff_viewer.calibrate_short', { defaultValue: 'Calibrate' })}</span>
                 </button>
               )}
 
@@ -3535,17 +3534,27 @@ export default function TakeoffViewerModule({
                                   )}
                                 </div>
                                 <div className="flex items-center gap-0.5 shrink-0">
-                                  {/* Link to BOQ button — always visible if linked, hover-only otherwise */}
+                                  {/* Link to BOQ button — always visible (the primary
+                                      per-measurement action). Linked rows get an emerald
+                                      tint; unlinked rows get a rose tint that strengthens
+                                      on hover. Discoverability matters here: hover-only
+                                      revealed too late for first-time users. */}
                                   <button
                                     onClick={(e) => { e.stopPropagation(); handleOpenLinkToBoq(m.id); }}
                                     className={clsx(
                                       'transition-all p-0.5 rounded',
                                       m.linkedPositionId
-                                        ? 'text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300'
-                                        : 'opacity-0 group-hover/item:opacity-100 text-content-tertiary hover:text-rose-700 dark:hover:text-rose-400',
+                                        ? 'text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/30'
+                                        : 'text-rose-500/60 dark:text-rose-400/60 hover:text-rose-700 dark:hover:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/30',
                                     )}
                                     aria-label={t('takeoff_viewer.link_to_boq', { defaultValue: 'Link to BOQ' })}
-                                    title={t('takeoff_viewer.link_to_boq', { defaultValue: 'Link to BOQ' })}
+                                    title={
+                                      m.linkedPositionId
+                                        ? t('takeoff_viewer.relink_to_boq', { defaultValue: 'Re-link or unlink BOQ position' })
+                                        : t('takeoff_viewer.link_to_boq_hint', {
+                                            defaultValue: 'Push this measurement\'s quantity to a BOQ position',
+                                          })
+                                    }
                                   >
                                     <Link2 size={12} />
                                   </button>
@@ -3574,6 +3583,27 @@ export default function TakeoffViewerModule({
                                     >
                                       <X size={10} />
                                     </button>
+                                  </div>
+
+                                  {/* Transfer-preview banner — shows exactly what will
+                                      be pushed to the picked position. Removes the "I
+                                      hope I clicked the right thing" anxiety. */}
+                                  <div className="mb-1.5 flex items-center gap-1.5 rounded bg-rose-100/70 dark:bg-rose-950/40 border border-rose-200/60 dark:border-rose-800/30 px-1.5 py-1 text-[10px]">
+                                    <ArrowUpRight size={10} className="text-rose-600 dark:text-rose-400 shrink-0" />
+                                    <span className="text-content-tertiary shrink-0">
+                                      {t('takeoff.will_transfer', { defaultValue: 'Will transfer:' })}
+                                    </span>
+                                    <span className="font-mono font-semibold text-rose-700 dark:text-rose-300 tabular-nums">
+                                      {(Math.round(m.value * 100) / 100).toLocaleString()}
+                                    </span>
+                                    <span className="font-mono text-rose-700/80 dark:text-rose-300/80 shrink-0">
+                                      {normalizeUnit(m.unit)}
+                                    </span>
+                                    {m.page && (
+                                      <span className="text-content-tertiary shrink-0 ml-auto">
+                                        {t('takeoff_viewer.page_label', { defaultValue: 'Page' })} {m.page}
+                                      </span>
+                                    )}
                                   </div>
 
                                   {/* Currently-linked summary + unlink */}
@@ -3691,19 +3721,50 @@ export default function TakeoffViewerModule({
                                               );
                                             })
                                             .slice(0, 100)
-                                            .map((pos) => (
-                                              <button
-                                                key={pos.id}
-                                                type="button"
-                                                onClick={() => handleLinkToPosition(m.id, pos)}
-                                                disabled={linkingInProgress}
-                                                className="w-full text-left px-2 py-1 rounded text-[10px] hover:bg-rose-100 dark:hover:bg-rose-900/30 transition-colors flex items-center gap-1.5 disabled:opacity-50"
-                                              >
-                                                <span className="font-mono text-rose-600 dark:text-rose-400 shrink-0">{pos.ordinal}</span>
-                                                <span className="text-content-primary truncate flex-1">{pos.description}</span>
-                                                <span className="text-content-tertiary shrink-0 text-[9px]">{pos.unit}</span>
-                                              </button>
-                                            ))}
+                                            .map((pos) => {
+                                              const measurementUnit = normalizeUnit(m.unit);
+                                              const unitMismatch = !!pos.unit && !!measurementUnit && pos.unit !== measurementUnit;
+                                              const currentQty = typeof pos.quantity === 'number' ? pos.quantity : Number(pos.quantity ?? 0);
+                                              return (
+                                                <button
+                                                  key={pos.id}
+                                                  type="button"
+                                                  onClick={() => handleLinkToPosition(m.id, pos)}
+                                                  disabled={linkingInProgress}
+                                                  className="w-full text-left px-2 py-1 rounded text-[10px] hover:bg-rose-100 dark:hover:bg-rose-900/30 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                                                  title={
+                                                    unitMismatch
+                                                      ? t('takeoff.unit_mismatch_warning', {
+                                                          defaultValue: 'Unit mismatch: position is in {{posUnit}}, measurement is in {{measUnit}}. Linking will overwrite the position\'s unit.',
+                                                          posUnit: pos.unit,
+                                                          measUnit: measurementUnit,
+                                                        })
+                                                      : t('takeoff.link_overwrites_qty', {
+                                                          defaultValue: 'Link → overwrites current quantity ({{q}} {{u}}) with the measurement value',
+                                                          q: currentQty,
+                                                          u: pos.unit ?? '',
+                                                        })
+                                                  }
+                                                >
+                                                  <span className="font-mono text-rose-600 dark:text-rose-400 shrink-0">{pos.ordinal}</span>
+                                                  <span className="text-content-primary truncate flex-1">{pos.description}</span>
+                                                  {/* Current qty badge — shows what's about to be replaced. */}
+                                                  {currentQty > 0 && (
+                                                    <span className="font-mono tabular-nums text-content-tertiary shrink-0 text-[9px]">
+                                                      {currentQty.toLocaleString()}
+                                                    </span>
+                                                  )}
+                                                  {unitMismatch ? (
+                                                    <span className="inline-flex items-center gap-0.5 font-mono shrink-0 text-[9px] text-amber-600 dark:text-amber-400" aria-label={t('takeoff.unit_mismatch', { defaultValue: 'unit mismatch' })}>
+                                                      <AlertTriangle size={9} />
+                                                      {pos.unit}
+                                                    </span>
+                                                  ) : (
+                                                    <span className="text-content-tertiary shrink-0 text-[9px]">{pos.unit}</span>
+                                                  )}
+                                                </button>
+                                              );
+                                            })}
                                         </div>
                                       </>
                                     )

@@ -5,7 +5,31 @@ All notable changes to OpenConstructionERP are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.6.11] — 2026-04-27
+## [2.6.13] — 2026-04-27
+
+### Fixed
+- COBie XLSX export — `<a href>` clicks didn't carry the JWT, plus the URL had a trailing slash that 307-redirected. Replaced with `downloadCobieXlsx()` that fetches with Authorization header and triggers a synthetic download.
+- `/assets` page contrast — text was hardcoded `text-neutral-100/200/300` so it disappeared in light theme and especially under hover. Switched to design tokens (`text-content-*`, `bg-surface-*`, `border-border-*`) so both themes are legible.
+- Asset detail drawer uses the same theme tokens — backdrop, header, action bar, KvList, QtyTile, BIM properties rows all adapt to light/dark.
+
+## [2.6.12] — 2026-04-27
+
+### Fixed
+- Frontend version sync — `frontend/package.json` was stuck at 2.6.10 through the v2.6.11 release, so the bundled UI kept reporting the old version. Both versions now move in lockstep (Issue #101 follow-up).
+- Asset Register `/assets` route 422 — `GET /v1/bim_hub/assets` and `PATCH /v1/bim_hub/assets/{id}/asset-info` are now declared before `GET /v1/bim_hub/{model_id}` so FastAPI matches the literal path first.
+- DWG annotation provenance preserved — backend `update_position` strip pass now also skips `dwg_annotation_source` when the caller includes it (mirrors the BIM/PDF carve-outs from v2.6.11).
+
+### Added
+- Asset detail drawer on `/assets` — click any asset row (or the new geometry icon) to open a side drawer with quantities, the full BIM properties (lazy-loaded from the same Parquet endpoint the 3D viewer uses), and an "Open in 3D Viewer" deep-link.
+- BOQ "Quality & AI" dropdown — Validate / Update Rates / AI Chat are promoted inline; the rest (Price Check, Cost Finder, Smart AI) live behind a single dropdown to free up toolbar space.
+- Per-measurement BOQ link in PDF Takeoff — link a single measurement to one BOQ position with a quantity-transfer preview and a unit-mismatch warning.
+- Update banner shows installed → latest delta — `v{current} → v{latest}` and "X changes in v{latest}" instead of the ambiguous "X changes" count.
+- `dwg_annotation_source` icon + short-label in the BOQ Quantity / Unit cells.
+
+### Tests
+- `test_boq_bim_qty_source_roundtrip.py` extended with PDF and DWG carve-out cases — all 4 pass.
+
+
 
 ### Fixed — Issue #96 (CLI / installer)
 - **`openconstructionerp upgrade`** new command that pip-installs into the *same* Python env it's running in (uses `sys.executable -m pip`). The Windows installer creates a private venv at `%LOCALAPPDATA%\OpenConstructionERP\venv`; running `pip install --upgrade openconstructionerp` from any other shell upgraded the user's global Python instead, leaving the launcher's venv pinned to the old wheel — so the startup banner kept reporting the old version even though pip claimed success. The new command always lands in the right env. `version` now also prints `Site-packages: …` so users can see which interpreter the launcher is actually using.

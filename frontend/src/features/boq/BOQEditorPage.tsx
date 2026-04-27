@@ -312,16 +312,19 @@ export function BOQEditorPage() {
               next.total = (next.quantity ?? 0) * (next.unit_rate ?? 0);
             }
             if (data.quantity !== undefined) {
-              // Manual edit clears BIM/PDF source badges. BIM/PDF picker
-              // callers explicitly include these keys in `data.metadata`
-              // so we preserve them in that case.
+              // Manual edit clears BIM/PDF/DWG source badges. The picker /
+              // takeoff link callers explicitly include the relevant key in
+              // `data.metadata` so we preserve it in that case — that's the
+              // signal the new value IS authoritative provenance.
               const incomingMeta = (data.metadata ?? {}) as Record<string, unknown>;
               const preservesBim = 'bim_qty_source' in incomingMeta;
               const preservesPdf = 'pdf_measurement_source' in incomingMeta;
-              if (!preservesBim || !preservesPdf) {
+              const preservesDwg = 'dwg_annotation_source' in incomingMeta;
+              if (!preservesBim || !preservesPdf || !preservesDwg) {
                 const meta = { ...(next.metadata ?? {}) } as Record<string, unknown>;
                 if (!preservesBim) delete meta.bim_qty_source;
                 if (!preservesPdf) delete meta.pdf_measurement_source;
+                if (!preservesDwg) delete meta.dwg_annotation_source;
                 next.metadata = meta;
               }
               next.validation_status = 'pending';

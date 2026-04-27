@@ -1047,7 +1047,46 @@ export async function updateElementAssetInfo(
   );
 }
 
-/** URL to the COBie UK 2.4 XLSX export for a BIM model. */
+/** URL to the COBie UK 2.4 XLSX export for a BIM model.
+ *  Backend route is `/export/cobie.xlsx` — NO trailing slash. With one,
+ *  FastAPI 307-redirects and the browser drops the Authorization header. */
 export function cobieExportUrl(modelId: string): string {
-  return `/api/v1/bim_hub/models/${encodeURIComponent(modelId)}/export/cobie.xlsx/`;
+  return `/api/v1/bim_hub/models/${encodeURIComponent(modelId)}/export/cobie.xlsx`;
+}
+
+/** Download the COBie XLSX with the current user's JWT.
+ *  `<a href>` clicks don't carry Authorization headers, so we fetch the
+ *  blob ourselves and trigger a synthetic download. Throws on HTTP error. */
+export async function downloadCobieXlsx(
+  modelId: string,
+  filename = 'cobie.xlsx',
+): Promise<void> {
+  const token = useAuthStore.getState().accessToken;
+  const headers: HeadersInit = {
+    Accept:
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/octet-stream',
+  };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const resp = await fetch(cobieExportUrl(modelId), { headers });
+  if (!resp.ok) {
+    let detail = '';
+    try {
+      detail = (await resp.text()).slice(0, 200);
+    } catch {
+      /* ignore */
+    }
+    throw new Error(`COBie export failed (HTTP ${resp.status}) ${detail}`);
+  }
+  const cd = resp.headers.get('content-disposition') || '';
+  const match = cd.match(/filename="?([^";]+)"?/i);
+  const finalName = match?.[1] || filename;
+  const blob = await resp.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = finalName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
