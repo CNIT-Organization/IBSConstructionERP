@@ -2659,9 +2659,36 @@ export default function TakeoffViewerModule({
               <button onClick={prevPage} disabled={currentPage <= 1} className="p-1.5 rounded hover:bg-surface-secondary disabled:opacity-30 transition-colors" aria-label={t('takeoff_viewer.prev_page', { defaultValue: 'Previous page' })}>
                 <ChevronLeft size={16} />
               </button>
-              <span className="text-xs text-content-secondary tabular-nums px-1">
-                {currentPage} / {totalPages}
-              </span>
+              <details className="relative" data-testid="page-jump">
+                <summary className="text-xs text-content-secondary tabular-nums px-1 cursor-pointer hover:text-content-primary list-none select-none" title={t('takeoff_viewer.jump_to_page', { defaultValue: 'Click to jump to a page' })}>
+                  {currentPage} / {totalPages}
+                </summary>
+                {totalPages > 1 && (
+                  <div className="absolute left-0 top-full mt-1 z-30 max-h-72 w-44 overflow-y-auto rounded-lg border border-border bg-surface-elevated shadow-lg p-1">
+                    {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => {
+                      const cnt = measurements.filter((m) => m.page === p).length;
+                      return (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={(e) => {
+                            setCurrentPage(p);
+                            (e.currentTarget.closest('details') as HTMLDetailsElement | null)?.removeAttribute('open');
+                          }}
+                          className={`flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-xs ${p === currentPage ? 'bg-oe-blue text-white' : 'text-content-secondary hover:bg-surface-secondary'}`}
+                        >
+                          <span className="tabular-nums">{t('takeoff_viewer.page_label', { defaultValue: 'Page' })} {p}</span>
+                          {cnt > 0 && (
+                            <span className={`tabular-nums rounded-full px-1.5 py-0.5 text-[10px] ${p === currentPage ? 'bg-white/20' : 'bg-purple-500/15 text-purple-500'}`}>
+                              {cnt}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </details>
               <button onClick={nextPage} disabled={currentPage >= totalPages} className="p-1.5 rounded hover:bg-surface-secondary disabled:opacity-30 transition-colors" aria-label={t('takeoff_viewer.next_page', { defaultValue: 'Next page' })}>
                 <ChevronRight size={16} />
               </button>

@@ -5,6 +5,11 @@ All notable changes to OpenConstructionERP are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.8] — 2026-04-27
+
+### Fixed — Takeoff
+- **Page-jump popover** on the page indicator. Click the `X / Y` chip in the toolbar and the dropdown lists every page with a measurement-count badge per page, so users can jump directly to the page they need (especially useful on multi-page tender drawings).
+
 ## [2.6.7] — 2026-04-27
 
 Annotation persistence — the last gap in PDF Takeoff durability.
