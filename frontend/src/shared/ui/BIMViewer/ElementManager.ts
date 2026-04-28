@@ -756,6 +756,22 @@ export class ElementManager {
 
         if (!child.material) {
           child.material = this.getMaterial(element?.discipline || 'other');
+        } else {
+          // IFC files frequently arrive with no IfcSurfaceStyle, so DDC's
+          // DAE export emits <color>0 0 0 1</color>. Trimesh preserves that,
+          // and the whole model renders pitch-black (Three.js issue tracker
+          // OE-#bim-ifc-black). Detect near-black albedo and swap in the
+          // discipline-coloured fallback so the user sees something usable.
+          const matsArr = Array.isArray(child.material) ? child.material : [child.material];
+          const isNearBlack = (m: THREE.Material): boolean => {
+            const c = (m as { color?: THREE.Color }).color;
+            if (!c) return false;
+            // Rec.601 luma — anything below 0.04 reads as solid black on screen.
+            return c.r * 0.299 + c.g * 0.587 + c.b * 0.114 < 0.04;
+          };
+          if (matsArr.length > 0 && matsArr.every(isNearBlack)) {
+            child.material = this.getMaterial(element?.discipline || 'other');
+          }
         }
 
         this.allDaeMeshes.push(child);

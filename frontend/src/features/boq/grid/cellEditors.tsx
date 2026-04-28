@@ -248,7 +248,7 @@ export interface FormulaCellEditorParams extends ICellEditorParams {
 /** Check whether an input string looks like a formula (Excel-style `=` prefix,
  * any math operator, named constant, or function call). Pure numbers like
  * "12.5" are NOT formulas — they go through the normal numeric path. */
-function isFormula(input: string): boolean {
+export function isFormula(input: string): boolean {
   const t = input.trim();
   if (!t) return false;
   if (t.startsWith('=')) return true;
@@ -482,12 +482,19 @@ export const FormulaCellEditor = forwardRef(
         : 'border-oe-blue/40 ring-oe-blue/20';
 
     return (
-      <div className="relative w-full h-full">
+      // Fixed editor dimensions: 180px wide × 32px tall. The Quantity column
+      // is 110px so a 180px popup spills ~70px to the right — but earlier
+      // sizing let the inner content grow to ~280px+ once a formula was
+      // typed, which pushed deep into the Unit Rate column. Capping the
+      // outer width here keeps the popup contained while still being wide
+      // enough for a typical "=2*PI()^2*3" expression. Taller height makes
+      // the live preview underneath legible without overlapping the row.
+      <div className="relative" style={{ width: '180px', height: '32px' }}>
         <div className={`flex items-center w-full h-full bg-surface-elevated border rounded ring-2 ${borderClass}`}>
           {/* fx badge — purple when in formula mode, faint otherwise */}
           <span
             aria-hidden="true"
-            className={`shrink-0 pl-1.5 pr-1 text-[10px] font-bold tracking-wide ${
+            className={`shrink-0 pl-1.5 pr-1 text-[11px] font-bold tracking-wide ${
               isFormulaMode ? 'text-violet-600 dark:text-violet-300' : 'text-content-quaternary'
             }`}
             title="Type = to enter a formula. Click ? for help."
@@ -496,7 +503,7 @@ export const FormulaCellEditor = forwardRef(
           </span>
           <input
             ref={inputRef}
-            className="flex-1 min-w-0 h-full bg-transparent outline-none text-xs text-content-primary tabular-nums text-right pr-1"
+            className="flex-1 min-w-0 h-full bg-transparent outline-none text-sm text-content-primary tabular-nums text-right pr-1"
             // ``defaultValue`` (NOT ``value``) — the input is driven by the
             // native ``input`` listener attached in useEffect above. React
             // synthetic ``onChange`` doesn't fire inside AG Grid's popup

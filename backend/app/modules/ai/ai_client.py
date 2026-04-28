@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
 OPENAI_MODEL = "gpt-4o"
-GEMINI_MODEL = "gemini-2.0-flash"
+GEMINI_MODEL = "gemini-2.5-flash"
 OPENROUTER_MODEL = "anthropic/claude-sonnet-4-20250514"
 MISTRAL_MODEL = "mistral-large-latest"
 GROQ_MODEL = "llama-3.3-70b-versatile"

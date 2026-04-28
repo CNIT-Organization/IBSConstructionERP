@@ -5,6 +5,19 @@ All notable changes to OpenConstructionERP are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.20] — 2026-04-28
+
+### Fixed
+- **Issue #103 — Gemini API model out-of-date.** Default model bumped `gemini-2.0-flash` → `gemini-2.5-flash` so Test Connection in Settings → Configuration succeeds again.
+- **IFC viewer rendered all-black.** When a converted IFC ships without `IfcSurfaceStyle`, DDC's DAE export writes `<color>0 0 0 1</color>`; trimesh preserves it into the GLB and the model was rendering as a flat black silhouette. Detect near-black albedo (Rec.601 luma < 0.04) per mesh and substitute the discipline-coloured `MeshStandardMaterial` instead. Original material is still cached on `userData.originalMaterial` so reset/colorBy modes are unchanged.
+- **BOQ alignment — 28px shift between position values and resource values.** The position grid has a 28px-wide visible `_bim_qty` column between `unit` and `quantity`; the resource row jumped directly from unit to qty, pushing every resource numeric (qty / rate / total / actions) 28px LEFT of its position counterpart. Added an aria-hidden 28px spacer slot (and a classification spacer for the case where that hidden column is toggled on) so right edges line up exactly.
+
+### Added
+- **Formula support on resource quantities** (Issue #90 follow-up). Resource qty / rate inline inputs now recognise the same Excel-style syntax as the position quantity editor: `=2*PI()*3`, `12.5 x 4`, `=sqrt(144)`. Live `= …` preview pops below the input while typing; on commit the evaluated number is written, errors leave the value unchanged. Pure numeric input continues through the existing path with no behaviour change.
+
+### Changed
+- **Quantity formula popup editor — sized for readability.** Fixed dimensions 180px × 32px (was the cell's 110px × ~24px), text size lifted from xs to sm. The popup no longer balloons rightward into the Unit Rate column when a long expression is typed.
+
 ## [2.6.19] — 2026-04-28
 
 ### Fixed

@@ -43,6 +43,7 @@ import { fetchBIMElementsByIds, fetchBIMElementProperties } from '@/features/bim
 import type { BIMElementData } from '@/shared/ui/BIMViewer/ElementManager';
 import { getIntlLocale } from '@/shared/lib/formatters';
 import { useFxRatesStore, getFxRate } from '@/stores/useFxRatesStore';
+import { isFormula, evaluateFormula } from './cellEditors';
 
 /* ── Validation Status Dot ────────────────────────────────────────── */
 
@@ -1640,30 +1641,65 @@ function InlineNumberInput({
     setTimeout(() => inputRef.current?.select(), 0);
   }, [value]);
 
+  // Resource-row qty/rate use this input. Like the position quantity cell,
+  // we want Excel-style formulas: typing "=2*PI()*3" or "12.5 x 4" commits
+  // the evaluated number. isFormula gates the formula path so plain "12.5"
+  // still goes through the simple parseFloat path with no behaviour change.
   const commit = useCallback(() => {
     setEditing(false);
-    const parsed = parseFloat(text.replace(',', '.'));
+    const trimmed = text.trim();
+    let parsed: number;
+    if (isFormula(trimmed)) {
+      const evaluated = evaluateFormula(trimmed);
+      parsed = evaluated !== null ? evaluated : NaN;
+    } else {
+      parsed = parseFloat(trimmed.replace(',', '.'));
+    }
     if (!isNaN(parsed) && parsed !== value) {
       onCommit(parsed);
     }
   }, [text, value, onCommit]);
 
+  // Live formula preview in edit mode — same fx feedback as the position
+  // quantity editor, scaled down for the resource row's tighter footprint.
+  const livePreview = useMemo(() => {
+    if (!editing) return null;
+    const trimmed = text.trim();
+    if (!isFormula(trimmed)) return null;
+    const v = evaluateFormula(trimmed);
+    return v !== null ? v : NaN;
+  }, [editing, text]);
+
   if (editing) {
     return (
-      <input
-        ref={inputRef}
-        type="text"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') commit();
-          if (e.key === 'Escape') setEditing(false);
-        }}
-        className={`bg-white dark:bg-surface-primary border border-oe-blue rounded px-1 py-0 text-right tabular-nums outline-none ${className ?? ''}`}
-        aria-label={t('boq.inline_edit_number', { defaultValue: 'Edit value' })}
-        autoFocus
-      />
+      <span className="relative inline-block w-full">
+        <input
+          ref={inputRef}
+          type="text"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commit();
+            if (e.key === 'Escape') setEditing(false);
+          }}
+          className={`bg-white dark:bg-surface-primary border border-oe-blue rounded px-1 py-0 text-right tabular-nums outline-none w-full ${className ?? ''}`}
+          aria-label={t('boq.inline_edit_number', { defaultValue: 'Edit value' })}
+          placeholder="123  or  =2*PI()*3"
+          autoFocus
+        />
+        {livePreview !== null && (
+          <span
+            className={`absolute right-0 top-full mt-0.5 text-[10px] tabular-nums pointer-events-none whitespace-nowrap z-10 px-1 rounded shadow-sm bg-surface-elevated border ${
+              isNaN(livePreview)
+                ? 'border-rose-300 text-rose-600 dark:text-rose-400'
+                : 'border-emerald-300 text-emerald-600 dark:text-emerald-400 font-semibold'
+            }`}
+          >
+            {isNaN(livePreview) ? '⚠' : '= ' + fmt.format(livePreview)}
+          </span>
+        )}
+      </span>
     );
   }
 
@@ -1738,7 +1774,7 @@ function InlineTextInput({
 
 /* ── Editable Resource Row ───────────────────────────────────────── */
 
-interface ColWidths { leftPad: number; ordinal: number; bimLink: number; unit: number; quantity: number; unitRate: number; total: number; actions: number }
+interface ColWidths { leftPad: number; ordinal: number; bimLink: number; classification: number; unit: number; bimQty: number; quantity: number; unitRate: number; total: number; actions: number }
 
 /**
  * Inline unit input with datalist autocomplete. Accepts free-form values
@@ -2478,20 +2514,28 @@ function EditableResourceRow({ data, ctx, colWidths }: { data: Record<string, un
       </span>
 
       {/* Name — flex-1, mirrors the position description column.
-          NO outer padding: InlineTextInput's display-mode span already
-          adds `px-1` internally (4px), which matches the position
-          description cellClass `!pl-1` (4px) — so resource names start
-          at the exact same X as position names.
+          Per UX request, resource names get an additional 16px left indent
+          (`pl-4`) on top of InlineTextInput's own `px-1` (4px). Total
+          offset 20px from the description column's left edge — enough to
+          be visually distinct from position descriptions while staying
+          inside the description column so the right-side columns
+          (qty / rate / total) keep their existing alignment.
           Committing a different name strips the catalogue code
           (handleNameChange) so the row becomes a customised resource,
           savable via the BookmarkPlus action. */}
-      <span className="truncate min-w-0 flex-1 self-center text-left text-content-secondary font-medium">
+      <span className="truncate min-w-0 flex-1 self-center text-left text-content-secondary font-medium pl-4">
         <InlineTextInput value={originalName} onCommit={handleNameChange} className="w-full text-xs text-left" />
       </span>
 
-      {/* RIGHT section — unit / qty / rate / total / actions are direct
-          siblings of the outer flex container with NO inter-slot gap,
-          so their X coordinates exactly match the position row's AG
+      {/* Classification spacer — hidden by default (width 0) but reserved so
+          that toggling it on doesn't break alignment. */}
+      {colWidths.classification > 0 && (
+        <span className="shrink-0 self-center" style={{ width: `${colWidths.classification}px` }} aria-hidden="true" />
+      )}
+
+      {/* RIGHT section — unit / [bim_qty spacer] / qty / rate / total / actions
+          are direct siblings of the outer flex container with NO inter-slot
+          gap, so their X coordinates exactly match the position row's AG
           Grid columns. Per UX request: unit on every resource row must
           sit on the same vertical X as unit on every position row. */}
       <span className="shrink-0 text-center text-content-tertiary self-center px-2" style={{ width: `${colWidths.unit}px` }}>
@@ -2501,6 +2545,16 @@ function EditableResourceRow({ data, ctx, colWidths }: { data: Record<string, un
           className="w-full text-xs text-center"
         />
       </span>
+
+      {/* _bim_qty spacer — the position grid has a 28px BIM-quantity-picker
+          column between unit and quantity. The resource row has no
+          equivalent feature (a resource has no BIM link), so we render an
+          empty placeholder of the exact same width. Without this spacer
+          every resource numeric value (qty / rate / total / actions) sits
+          28px LEFT of the position row. */}
+      {colWidths.bimQty > 0 && (
+        <span className="shrink-0 self-center" style={{ width: `${colWidths.bimQty}px` }} aria-hidden="true" />
+      )}
 
       {/* Qty — slot pr-1/pl-1 (4px) + InlineNumberInput's display-span
           px-1 (4px) sums to 8px, matching the position quantity cell's
@@ -2612,7 +2666,14 @@ export function ResourceFullWidthRenderer(params: ICellRendererParams) {
       leftPad,
       ordinal: getW('ordinal'),
       bimLink: getW('_bim_link'),
+      // classification is hide:true by default; if a user toggles it on,
+      // we still match the position layout so values stay aligned.
+      classification: getW('classification'),
       unit: getW('unit'),
+      // _bim_qty is a 28px visible column between unit and quantity; the
+      // resource row needs a matching spacer or every numeric value
+      // (qty/rate/total/actions) sits 28px LEFT of its position counterpart.
+      bimQty: getW('_bim_qty'),
       quantity: getW('quantity'),
       unitRate: getW('unit_rate'),
       total: getW('total'),
