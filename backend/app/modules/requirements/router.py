@@ -23,8 +23,8 @@ import logging
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 
@@ -236,40 +236,191 @@ _EXPORT_COLUMNS = [
 ]
 
 
+def _export_rows(item: object) -> list[dict[str, Any]]:
+    """Project requirements onto the canonical export column set."""
+    reqs = getattr(item, "requirements", [])
+    out: list[dict[str, Any]] = []
+    for raw in reqs:
+        resp = _req_to_response(raw)
+        out.append({col: getattr(resp, col, "") or "" for col in _EXPORT_COLUMNS})
+    return out
+
+
+@router.get("/template.xlsx", response_model=None)
+async def download_requirements_template(
+    _user_id: CurrentUserId,
+) -> Response:
+    """Download an Excel template with headers, hints, and an operator legend."""
+    from app.modules.requirements.excel_io import build_template_xlsx
+
+    payload = build_template_xlsx()
+    return Response(
+        content=payload,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={
+            "Content-Disposition": 'attachment; filename="requirements_template.xlsx"',
+        },
+    )
+
+
 @router.get("/{set_id}/export/", response_model=None)
-async def export_requirements(
+async def export_requirements_legacy(
     set_id: uuid.UUID,
-    format: str = Query(default="csv", pattern="^(csv|json)$"),
+    format: str = Query(default="csv", pattern="^(csv|json|xlsx)$"),
     user_id: CurrentUserId = None,  # type: ignore[assignment]
     service: RequirementsService = Depends(_get_service),
 ):
-    """Export all requirements for a set as CSV or JSON."""
-    item = await service.get_set(set_id)
-    reqs = getattr(item, "requirements", [])
-    rows = [_req_to_response(r) for r in reqs]
+    """Export all requirements (legacy ``?format=`` flavour kept for callers)."""
+    return await _export_dispatch(set_id, format, service)
 
-    if format == "json":
-        data = [{col: getattr(r, col, "") for col in _EXPORT_COLUMNS} for r in rows]
+
+@router.get("/{set_id}/export.{ext}", response_model=None)
+async def export_requirements(
+    set_id: uuid.UUID,
+    ext: str,
+    user_id: CurrentUserId,
+    service: RequirementsService = Depends(_get_service),
+):
+    """Export all requirements as ``csv | json | xlsx``.
+
+    The extension drives the format so callers can hard-code the URL
+    (``/sets/abc/export.xlsx``) and Excel will pick the right opener.
+    """
+    if ext not in {"csv", "json", "xlsx"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported export format '{ext}'. Use csv, json, or xlsx.",
+        )
+    return await _export_dispatch(set_id, ext, service)
+
+
+async def _export_dispatch(
+    set_id: uuid.UUID,
+    fmt: str,
+    service: RequirementsService,
+):
+    item = await service.get_set(set_id)
+    rows = _export_rows(item)
+    safe_name = (
+        getattr(item, "name", None) or f"requirements_{set_id}"
+    ).replace("/", "_").replace("\\", "_").strip() or f"requirements_{set_id}"
+
+    if fmt == "json":
         return JSONResponse(
-            content=data,
+            content=rows,
             headers={
-                "Content-Disposition": f'attachment; filename="requirements_{set_id}.json"',
+                "Content-Disposition": f'attachment; filename="{safe_name}.json"',
             },
         )
 
-    # CSV
+    if fmt == "xlsx":
+        from app.modules.requirements.excel_io import export_xlsx
+
+        payload = export_xlsx(rows, title=safe_name)
+        return Response(
+            content=payload,
+            media_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+            headers={
+                "Content-Disposition": f'attachment; filename="{safe_name}.xlsx"',
+            },
+        )
+
+    # csv
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(_EXPORT_COLUMNS)
     for r in rows:
-        writer.writerow([getattr(r, col, "") for col in _EXPORT_COLUMNS])
+        writer.writerow([r.get(col, "") for col in _EXPORT_COLUMNS])
     buf.seek(0)
     return StreamingResponse(
         iter([buf.getvalue()]),
         media_type="text/csv",
         headers={
-            "Content-Disposition": f'attachment; filename="requirements_{set_id}.csv"',
+            "Content-Disposition": f'attachment; filename="{safe_name}.csv"',
         },
+    )
+
+
+# ── Excel / CSV import ──────────────────────────────────────────────────────
+
+
+class ImportFromFileResponse(BaseModel):
+    """Response from POST /{set_id}/import/file."""
+
+    set_id: uuid.UUID
+    imported: int
+    skipped: int
+    warnings: list[str] = []
+
+
+@router.post(
+    "/{set_id}/import/file/",
+    response_model=ImportFromFileResponse,
+    status_code=200,
+)
+async def import_requirements_file(
+    set_id: uuid.UUID,
+    user_id: CurrentUserId,
+    session: SessionDep,
+    file: UploadFile = File(...),
+    service: RequirementsService = Depends(_get_service),
+    _perm: None = Depends(RequirePermission("requirements.update")),
+) -> ImportFromFileResponse:
+    """Import requirements from an Excel or CSV file into an existing set.
+
+    The file's extension picks the parser. Each row is added to the
+    set; rows missing both ``entity`` and ``attribute`` are skipped.
+    Warnings (unknown operators, missing optional columns) are
+    surfaced in the response so the UI can render a banner.
+    """
+    from app.modules.requirements.excel_io import parse_csv, parse_xlsx
+
+    item = await service.get_set(set_id)
+    await verify_project_access(item.project_id, str(user_id), session)
+
+    payload = await file.read()
+    name = (file.filename or "").lower()
+    if name.endswith(".csv"):
+        rows, warnings = parse_csv(payload)
+    elif name.endswith(".xlsx") or name.endswith(".xls"):
+        rows, warnings = parse_xlsx(payload)
+    else:
+        # Best-effort: if no extension, try Excel first then CSV
+        rows, warnings = parse_xlsx(payload)
+        if not rows and not warnings:
+            rows, warnings = parse_csv(payload)
+
+    imported = 0
+    skipped = 0
+    for row in rows:
+        try:
+            create = RequirementCreate(
+                entity=row["entity"],
+                attribute=row["attribute"],
+                constraint_type=row["constraint_type"],
+                constraint_value=row.get("constraint_value", ""),
+                unit=row.get("unit", ""),
+                category=row.get("category", "general"),
+                priority=row.get("priority", "must"),
+                source_ref=row.get("source_ref", ""),
+                notes=row.get("notes", ""),
+            )
+        except Exception as exc:  # noqa: BLE001 - record but keep going
+            skipped += 1
+            warnings.append(f"Skipped row '{row.get('entity', '')}.{row.get('attribute', '')}': {exc}")
+            continue
+        await service.add_requirement(set_id, create, user_id=str(user_id) if user_id else "")
+        imported += 1
+
+    return ImportFromFileResponse(
+        set_id=set_id,
+        imported=imported,
+        skipped=skipped,
+        warnings=warnings,
     )
 
 
@@ -627,6 +778,77 @@ async def list_requirements_by_bim_element(
 # factory (see ``include_router`` at the bottom of this file).  The
 # similar-requirements endpoint below stays module-specific because it
 # needs to validate set/req parent linkage.
+
+
+# ── Validate against a BIM model ─────────────────────────────────────────
+
+
+class ValidateBIMResponse(BaseModel):
+    """Compact response from POST /{set_id}/validate-bim/{model_id}."""
+
+    report_id: uuid.UUID
+    status: str
+    score: float
+    total_checks: int
+    passed: int
+    warnings: int
+    errors: int
+    skipped_requirements: int
+    duration_ms: float
+
+
+@router.post(
+    "/{set_id}/validate-bim/{model_id}",
+    response_model=ValidateBIMResponse,
+    dependencies=[Depends(RequirePermission("validation.create"))],
+)
+async def validate_set_against_bim_model(
+    set_id: uuid.UUID,
+    model_id: uuid.UUID,
+    user_id: CurrentUserId,
+    session: SessionDep,
+    service: RequirementsService = Depends(_get_service),
+) -> ValidateBIMResponse:
+    """Run every requirement in a set against every element of a BIM model.
+
+    Persists a regular ``ValidationReport`` (``target_type='bim_model'``) so
+    the existing dashboard, BIM viewer badges, and SARIF export all surface
+    these results without a discriminator.
+    """
+    from app.modules.requirements.bim_validator import (
+        validate_requirement_set_against_model,
+    )
+
+    req_set = await service.get_set(set_id)
+    await verify_project_access(req_set.project_id, str(user_id), session)
+
+    requirements = list(getattr(req_set, "requirements", []) or [])
+    try:
+        report = await validate_requirement_set_against_model(
+            session,
+            req_set=req_set,
+            requirements=requirements,
+            model_id=model_id,
+            user_id=str(user_id) if user_id else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    meta = getattr(report, "metadata_", {}) or {}
+    return ValidateBIMResponse(
+        report_id=report.id,
+        status=report.status,
+        score=float(report.score) if report.score else 1.0,
+        total_checks=report.total_rules,
+        passed=report.passed_count,
+        warnings=report.warning_count,
+        errors=report.error_count,
+        skipped_requirements=int(meta.get("requirements_skipped", 0)),
+        duration_ms=float(meta.get("duration_ms", 0.0)),
+    )
 
 
 @router.get(

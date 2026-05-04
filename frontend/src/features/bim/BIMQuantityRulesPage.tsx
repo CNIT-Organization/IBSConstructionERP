@@ -41,6 +41,9 @@ import {
   ClipboardCheck,
   Shield,
   Search,
+  Upload,
+  Download,
+  CheckCircle2,
 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -78,10 +81,14 @@ import {
   addRequirement,
   updateRequirement,
   deleteRequirement,
+  importRequirementsFromFile,
+  validateRequirementSetAgainstModel,
+  requirementsTemplateUrl,
   type Requirement,
   type RequirementSet,
   type AddRequirementPayload,
   type UpdateRequirementPayload,
+  type ValidateBIMResult,
 } from '@/features/requirements/api';
 
 /* ── Form state types ─────────────────────────────────────────────────── */
@@ -1063,6 +1070,138 @@ const REQ_CATEGORIES = [
 
 const REQ_PRIORITIES = ['must', 'should', 'may'] as const;
 
+/* ── ConstraintValueInput — picks the right widget per operator ─────── */
+
+const NUMERIC_OPERATORS = new Set<ConstraintType>(['min', 'max', 'range']);
+const PRESENCE_OPERATORS = new Set<ConstraintType>(['exists', 'not_exists']);
+
+function parseRange(text: string): { from: string; to: string } {
+  // Split on '..', '-', ',', or ';' — same operators the backend accepts.
+  const m = text.split(/\s*(?:\.\.|;|,|-)\s*/).filter((s) => s.length > 0);
+  return { from: m[0] ?? '', to: m[1] ?? '' };
+}
+
+interface ConstraintValueInputProps {
+  constraintType: ConstraintType;
+  value: string;
+  onChange: (v: string) => void;
+}
+
+function ConstraintValueInput({
+  constraintType,
+  value,
+  onChange,
+}: ConstraintValueInputProps) {
+  const { t } = useTranslation();
+
+  if (PRESENCE_OPERATORS.has(constraintType)) {
+    return (
+      <p className="rounded-md border border-border-light bg-surface-tertiary px-2 py-1.5 text-[10px] text-content-tertiary">
+        {constraintType === 'exists'
+          ? t('bim_rules.req_exists_hint', {
+              defaultValue: 'No value needed — passes when the property is present.',
+            })
+          : t('bim_rules.req_not_exists_hint', {
+              defaultValue: 'No value needed — passes when the property is missing.',
+            })}
+      </p>
+    );
+  }
+
+  if (constraintType === 'range') {
+    const { from, to } = parseRange(value);
+    const update = (next: { from: string; to: string }) => {
+      const a = next.from.trim();
+      const b = next.to.trim();
+      if (!a && !b) onChange('');
+      else if (a && b) onChange(`${a}..${b}`);
+      else onChange(a || b);
+    };
+    return (
+      <div className="flex items-center gap-1">
+        <input
+          type="number"
+          step="any"
+          value={from}
+          onChange={(e) => update({ from: e.target.value, to })}
+          placeholder={t('bim_rules.req_range_from', { defaultValue: 'from' })}
+          className="w-full rounded-lg border border-border-light bg-surface-primary px-2 py-1.5 text-xs text-content-primary focus:border-oe-blue focus:outline-none"
+        />
+        <span className="text-[10px] text-content-tertiary">–</span>
+        <input
+          type="number"
+          step="any"
+          value={to}
+          onChange={(e) => update({ from, to: e.target.value })}
+          placeholder={t('bim_rules.req_range_to', { defaultValue: 'to' })}
+          className="w-full rounded-lg border border-border-light bg-surface-primary px-2 py-1.5 text-xs text-content-primary focus:border-oe-blue focus:outline-none"
+        />
+      </div>
+    );
+  }
+
+  if (NUMERIC_OPERATORS.has(constraintType)) {
+    return (
+      <input
+        type="number"
+        step="any"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={
+          constraintType === 'min'
+            ? t('bim_rules.req_min_placeholder', { defaultValue: '≥ value' })
+            : t('bim_rules.req_max_placeholder', { defaultValue: '≤ value' })
+        }
+        className="w-full rounded-lg border border-border-light bg-surface-primary px-2 py-1.5 text-xs text-content-primary focus:border-oe-blue focus:outline-none"
+      />
+    );
+  }
+
+  if (constraintType === 'regex') {
+    let regexValid: boolean | null = null;
+    if (value.trim()) {
+      try {
+        new RegExp(value);
+        regexValid = true;
+      } catch {
+        regexValid = false;
+      }
+    }
+    return (
+      <div className="space-y-1">
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="^F[0-9]{2,3}$"
+          className="w-full rounded-lg border border-border-light bg-surface-primary px-2 py-1.5 font-mono text-xs text-content-primary focus:border-oe-blue focus:outline-none"
+        />
+        {regexValid === true && (
+          <p className="text-[10px] text-green-600">
+            {t('bim_rules.regex_valid', { defaultValue: 'Valid pattern' })}
+          </p>
+        )}
+        {regexValid === false && (
+          <p className="text-[10px] text-red-500">
+            {t('bim_rules.regex_invalid', { defaultValue: 'Invalid pattern' })}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  // equals | not_equals | contains | not_contains
+  return (
+    <input
+      type="text"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={t('bim_rules.req_value_placeholder', { defaultValue: 'Value' })}
+      className="w-full rounded-lg border border-border-light bg-surface-primary px-2 py-1.5 text-xs text-content-primary focus:border-oe-blue focus:outline-none"
+    />
+  );
+}
+
 interface RequirementRuleEditorProps {
   open: boolean;
   onClose: () => void;
@@ -1312,40 +1451,11 @@ function RequirementRuleEditor({
                       </option>
                     ))}
                   </select>
-                  {form.constraint_type !== 'exists' && form.constraint_type !== 'not_exists' && (
-                    <input
-                      type="text"
-                      value={form.constraint_value}
-                      onChange={(e) => set('constraint_value', e.target.value)}
-                      placeholder={
-                        form.constraint_type === 'regex'
-                          ? '^F[0-9]+$'
-                          : form.constraint_type === 'range'
-                            ? '200..400'
-                            : 'Value'
-                      }
-                      className={clsx(
-                        'w-full rounded-lg border border-border-light bg-surface-primary px-2 py-1.5 text-xs text-content-primary focus:border-oe-blue focus:outline-none',
-                        form.constraint_type === 'regex' && 'font-mono',
-                      )}
-                    />
-                  )}
-                  {form.constraint_type === 'regex' && form.constraint_value && (() => {
-                    try {
-                      new RegExp(form.constraint_value);
-                      return (
-                        <p className="text-[10px] text-green-600">
-                          {t('bim_rules.regex_valid', { defaultValue: 'Valid pattern' })}
-                        </p>
-                      );
-                    } catch {
-                      return (
-                        <p className="text-[10px] text-red-500">
-                          {t('bim_rules.regex_invalid', { defaultValue: 'Invalid pattern' })}
-                        </p>
-                      );
-                    }
-                  })()}
+                  <ConstraintValueInput
+                    constraintType={form.constraint_type}
+                    value={form.constraint_value}
+                    onChange={(v) => set('constraint_value', v)}
+                  />
                 </div>
               </div>
             </div>
@@ -1483,46 +1593,46 @@ interface RequirementPack {
   rules: AddRequirementPayload[];
 }
 
-// Backend constraint_type regex (`requirements/schemas.py`) accepts only:
-// equals | min | max | range | contains | regex.  "exists" is a frontend-only
-// shorthand and gets rejected with 422, so each pack rule below uses one of
-// the six accepted types — `regex: ".+"` reads as "any non-empty value".
+// All ten operators (equals | not_equals | min | max | range | contains |
+// not_contains | regex | exists | not_exists) are accepted by the backend
+// schema as of the v2.8.8 unified contract — preset packs use the operator
+// that fits the rule semantically.
 const REQUIREMENTS_PRESET_PACKS: RequirementPack[] = [
   {
     id: 'fire-safety',
     emoji: '🔥',
     title: 'Fire safety basics',
-    subtitle: 'Walls and doors must declare a fire rating; structural columns must reach F90.',
+    subtitle: 'Walls and doors must declare a fire rating; structural columns must match a code-compliant pattern.',
     rules: [
       {
         entity: 'Walls',
         attribute: 'FireRating',
-        constraint_type: 'regex',
-        constraint_value: '.+',
+        constraint_type: 'exists',
+        constraint_value: '',
         unit: '',
         category: 'fire_safety',
         priority: 'must',
-        notes: '[REVIT] Category=Walls | Walls must declare a fire rating',
+        notes: 'Walls must declare a fire rating',
       },
       {
         entity: 'Doors',
         attribute: 'FireRating',
-        constraint_type: 'regex',
-        constraint_value: '.+',
+        constraint_type: 'exists',
+        constraint_value: '',
         unit: '',
         category: 'fire_safety',
         priority: 'must',
-        notes: '[REVIT] Category=Doors | Doors must declare a fire rating',
+        notes: 'Doors must declare a fire rating',
       },
       {
         entity: 'Structural Columns',
         attribute: 'FireRating',
-        constraint_type: 'min',
-        constraint_value: 'F90',
+        constraint_type: 'regex',
+        constraint_value: '^F\\d{2,3}$',
         unit: '',
         category: 'fire_safety',
         priority: 'must',
-        notes: '[REVIT] Category=Structural Columns | Columns ≥ F90',
+        notes: 'Structural columns must match F30/F60/F90/F120 format',
       },
     ],
   },
@@ -1573,32 +1683,32 @@ const REQUIREMENTS_PRESET_PACKS: RequirementPack[] = [
       {
         entity: 'Structural Columns',
         attribute: 'Material',
-        constraint_type: 'regex',
-        constraint_value: '.+',
+        constraint_type: 'exists',
+        constraint_value: '',
         unit: '',
         category: 'structural',
         priority: 'must',
-        notes: '[REVIT] Category=Structural Columns | Material assigned',
+        notes: 'Structural columns must declare a material',
       },
       {
         entity: 'Structural Framing',
         attribute: 'Material',
-        constraint_type: 'regex',
-        constraint_value: '.+',
+        constraint_type: 'exists',
+        constraint_value: '',
         unit: '',
         category: 'structural',
         priority: 'must',
-        notes: '[REVIT] Category=Structural Framing | Material assigned',
+        notes: 'Structural framing must declare a material',
       },
       {
         entity: 'Walls',
         attribute: 'Structural',
-        constraint_type: 'regex',
-        constraint_value: '.+',
+        constraint_type: 'exists',
+        constraint_value: '',
         unit: '',
         category: 'structural',
         priority: 'should',
-        notes: '[REVIT] Category=Walls | Load-bearing flag set where applicable',
+        notes: 'Load-bearing flag set where applicable',
       },
     ],
   },
@@ -1744,6 +1854,74 @@ function RequirementsTabContent({
     onError: (e: Error) => addToast({ type: 'error', title: t('common.error', { defaultValue: 'Error' }), message: e.message }),
   });
 
+  // BIM models for the current project — needed for the
+  // "Validate against BIM model" CTA. We fetch them lazily so the
+  // Requirements tab opens fast even when the project has many models.
+  const { data: bimModelsData } = useQuery({
+    queryKey: ['bim-models-for-validation', projectId],
+    queryFn: () => (projectId ? fetchBIMModels(projectId) : Promise.resolve({ items: [] } as { items: Array<{ id: string; name: string }> })),
+    enabled: !!projectId,
+  });
+  const bimModels = bimModelsData?.items ?? [];
+  const [pickModelOpen, setPickModelOpen] = useState(false);
+  const [lastValidation, setLastValidation] = useState<ValidateBIMResult | null>(null);
+
+  const validateMut = useMutation({
+    mutationFn: (modelId: string) =>
+      validateRequirementSetAgainstModel(currentSetId, modelId),
+    onSuccess: (result) => {
+      setLastValidation(result);
+      setPickModelOpen(false);
+      addToast({
+        type: result.errors > 0 ? 'error' : result.warnings > 0 ? 'warning' : 'success',
+        title: t('bim_rules.req_validate_done', {
+          defaultValue: 'Validation finished',
+        }),
+        message: t('bim_rules.req_validate_summary', {
+          defaultValue: '{{passed}} passed · {{warnings}} warnings · {{errors}} errors ({{checks}} checks)',
+          passed: result.passed,
+          warnings: result.warnings,
+          errors: result.errors,
+          checks: result.total_checks,
+        }),
+      });
+    },
+    onError: (e: Error) =>
+      addToast({ type: 'error', title: t('common.error', { defaultValue: 'Error' }), message: e.message }),
+  });
+
+  const importFileMut = useMutation({
+    mutationFn: async (file: File) => {
+      let setId = currentSetId;
+      if (!setId) {
+        if (!projectId) throw new Error('No active project');
+        const created = await createRequirementSet({
+          project_id: projectId,
+          name: file.name.replace(/\.[^.]+$/, ''),
+          description: `Imported from ${file.name}`,
+        });
+        setId = created.id;
+        setActiveSetId(setId);
+      }
+      return importRequirementsFromFile(setId, file);
+    },
+    onSuccess: (result) => {
+      invalidateAll();
+      addToast({
+        type: result.warnings.length > 0 ? 'warning' : 'success',
+        title: t('bim_rules.req_import_done', { defaultValue: 'Import complete' }),
+        message: t('bim_rules.req_import_summary', {
+          defaultValue: 'Imported {{n}} rules · skipped {{s}} · {{w}} warnings',
+          n: result.imported,
+          s: result.skipped,
+          w: result.warnings.length,
+        }),
+      });
+    },
+    onError: (e: Error) =>
+      addToast({ type: 'error', title: t('common.error', { defaultValue: 'Error' }), message: e.message }),
+  });
+
   // One-click pack installer — creates the set if missing, then bulk-adds
   // every rule in the pack so the user lands on a populated table without
   // hand-authoring each row.
@@ -1789,13 +1967,13 @@ function RequirementsTabContent({
         constraint_type: form.constraint_type,
         constraint_value:
           form.constraint_type === 'exists' || form.constraint_type === 'not_exists'
-            ? '*'
+            ? ''
             : form.constraint_value,
         unit: '',
         category: form.category,
         priority: form.priority,
         source_ref: form.source_ref,
-        notes: `[${form.format.toUpperCase()}] ${form.filter_param}=${form.filter_value} | ${form.notes}`,
+        notes: form.notes,
       };
       if (editorMode === 'edit' && editingReqId) {
         editMut.mutate({ id: editingReqId, data: payload });
@@ -1894,6 +2072,77 @@ function RequirementsTabContent({
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          {/* Import from Excel / CSV */}
+          <label
+            className={clsx(
+              'flex cursor-pointer items-center gap-1.5 rounded-lg border border-border-light bg-surface-primary px-2.5 py-1.5 text-[11px] font-medium text-content-secondary hover:border-oe-blue hover:text-oe-blue',
+              importFileMut.isPending && 'pointer-events-none opacity-60',
+            )}
+            title={t('bim_rules.req_import_btn_title', {
+              defaultValue: 'Upload Excel or CSV',
+            })}
+          >
+            {importFileMut.isPending ? (
+              <Loader2 size={12} className="animate-spin" />
+            ) : (
+              <Upload size={12} />
+            )}
+            {t('bim_rules.req_import_btn', { defaultValue: 'Import' })}
+            <input
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) importFileMut.mutate(f);
+                e.target.value = '';
+              }}
+            />
+          </label>
+
+          {/* Excel template download */}
+          <a
+            href={requirementsTemplateUrl()}
+            className="flex items-center gap-1.5 rounded-lg border border-border-light bg-surface-primary px-2.5 py-1.5 text-[11px] font-medium text-content-secondary hover:border-oe-blue hover:text-oe-blue"
+            title={t('bim_rules.req_template_btn_title', {
+              defaultValue: 'Download Excel template',
+            })}
+          >
+            <Download size={12} />
+            {t('bim_rules.req_template_btn', { defaultValue: 'Template' })}
+          </a>
+
+          {/* Export current set */}
+          {currentSetId && requirements.length > 0 && (
+            <a
+              href={`/api/v1/requirements/${currentSetId}/export.xlsx`}
+              className="flex items-center gap-1.5 rounded-lg border border-border-light bg-surface-primary px-2.5 py-1.5 text-[11px] font-medium text-content-secondary hover:border-oe-blue hover:text-oe-blue"
+              title={t('bim_rules.req_export_xlsx', { defaultValue: 'Export as Excel' })}
+            >
+              <Download size={12} />
+              {t('common.export', { defaultValue: 'Export' })}
+            </a>
+          )}
+
+          {/* Validate against BIM model — the headline action */}
+          {currentSetId && requirements.length > 0 && bimModels.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setPickModelOpen(true)}
+              disabled={validateMut.isPending}
+              className="flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-50 px-3 py-1.5 text-[11px] font-semibold text-emerald-700 shadow-sm hover:bg-emerald-100 dark:bg-emerald-900/30 dark:text-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {validateMut.isPending ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <CheckCircle2 size={12} />
+              )}
+              {t('bim_rules.req_validate_btn', {
+                defaultValue: 'Validate against model',
+              })}
+            </button>
+          )}
+
           {elements && elements.length > 0 && (
             <button
               type="button"
@@ -1915,6 +2164,101 @@ function RequirementsTabContent({
           </button>
         </div>
       </div>
+
+      {/* Last validation summary card */}
+      {lastValidation && (
+        <div
+          className={clsx(
+            'rounded-xl border px-4 py-3 text-xs',
+            lastValidation.errors > 0
+              ? 'border-red-300 bg-red-50 text-red-800 dark:bg-red-900/20 dark:text-red-300'
+              : lastValidation.warnings > 0
+                ? 'border-amber-300 bg-amber-50 text-amber-800 dark:bg-amber-900/20 dark:text-amber-300'
+                : 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-300',
+          )}
+        >
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-base font-semibold">
+              {Math.round(lastValidation.score * 100)}%
+            </span>
+            <span>
+              {t('bim_rules.req_validate_passed', { defaultValue: '{{n}} passed', n: lastValidation.passed })}
+            </span>
+            <span>·</span>
+            <span>
+              {t('bim_rules.req_validate_warned', { defaultValue: '{{n}} warnings', n: lastValidation.warnings })}
+            </span>
+            <span>·</span>
+            <span>
+              {t('bim_rules.req_validate_errored', { defaultValue: '{{n}} errors', n: lastValidation.errors })}
+            </span>
+            <span>·</span>
+            <span>
+              {t('bim_rules.req_validate_skipped', {
+                defaultValue: '{{n}} requirements skipped (no matching elements)',
+                n: lastValidation.skipped_requirements,
+              })}
+            </span>
+            <a
+              href={`/validation?report_id=${lastValidation.report_id}`}
+              className="ml-auto font-medium underline-offset-2 hover:underline"
+            >
+              {t('bim_rules.req_validate_open_report', { defaultValue: 'Open full report →' })}
+            </a>
+          </div>
+        </div>
+      )}
+
+      {/* Pick model modal */}
+      {pickModelOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+          onClick={() => !validateMut.isPending && setPickModelOpen(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-xl bg-surface-primary p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="mb-1 text-sm font-semibold text-content-primary">
+              {t('bim_rules.req_pick_model_title', {
+                defaultValue: 'Validate against which BIM model?',
+              })}
+            </h3>
+            <p className="mb-4 text-xs text-content-secondary">
+              {t('bim_rules.req_pick_model_subtitle', {
+                defaultValue:
+                  'Each requirement will be checked against every element in the chosen model. The score and findings will be saved as a regular validation report.',
+              })}
+            </p>
+            <div className="max-h-72 space-y-1 overflow-auto">
+              {bimModels.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  disabled={validateMut.isPending}
+                  onClick={() => validateMut.mutate(m.id)}
+                  className="flex w-full items-center justify-between rounded-lg border border-border-light bg-surface-secondary px-3 py-2 text-left text-xs font-medium text-content-primary hover:border-oe-blue hover:bg-oe-blue/5 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <span>{m.name}</span>
+                  {validateMut.isPending && validateMut.variables === m.id && (
+                    <Loader2 size={12} className="animate-spin" />
+                  )}
+                </button>
+              ))}
+            </div>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPickModelOpen(false)}
+                disabled={validateMut.isPending}
+                className="rounded-lg border border-border-light bg-surface-primary px-3 py-1.5 text-xs font-medium text-content-secondary hover:bg-surface-tertiary disabled:opacity-60"
+              >
+                {t('common.cancel', { defaultValue: 'Cancel' })}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Content */}
       {isLoading ? (

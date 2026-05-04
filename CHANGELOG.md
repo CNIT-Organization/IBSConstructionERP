@@ -5,6 +5,26 @@ All notable changes to OpenConstructionERP are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.8] — 2026-05-04
+
+### Added
+- `POST /api/v1/requirements/{set_id}/validate-bim/{model_id}` — runs every requirement in a set against every element of a BIM model and persists a regular `ValidationReport`. Reuses the existing dashboard, BIM viewer badges, and SARIF export.
+- `GET /api/v1/requirements/template.xlsx` — downloadable Excel template with headers, a sample row, comment hints per column, and a Legend sheet listing all 10 operators.
+- `POST /api/v1/requirements/{set_id}/import/file/` — Excel/CSV bulk import; format auto-detected, malformed rows reported as warnings.
+- `GET /api/v1/requirements/{set_id}/export.{xlsx|csv|json}` — unified export endpoint; extension drives the format.
+- `/bim/rules?mode=requirements` toolbar — Import / Template / Export / "Validate against model" buttons; validation result card with score, counts, and link to the full report.
+- BIM model picker modal lets the user pick which model to validate against; status pulses while the run is in flight.
+
+### Changed
+- Requirement constraint operators unified across the stack: backend now accepts the full set `equals | not_equals | min | max | range | contains | not_contains | regex | exists | not_exists` (was 6); frontend `bimConstants.ts` aligns; Excel template documents all 10. The previous `regex: ".+"` workaround for "any value" presets is gone — `exists` is the operator.
+- Constraint value input in the requirement editor now switches widget by operator: number for min/max, two numbers for range, regex with live validation, text for the rest, hidden for exists/not_exists. No more guessing whether a field expects "200..400" or "200,400".
+- Requirement form no longer prefixes notes with `[REVIT] Category=...` — the entity field already carries the category.
+
+### Internal
+- `requirements/evaluator.py` — pure constraint evaluator; 32 unit tests cover all 10 operators, edge cases, European decimal separator, range separator variants.
+- `requirements/excel_io.py` — Excel/CSV template + parse + export, with operator legend sheet; 8 unit tests cover roundtrips, missing required columns, unknown-operator warnings.
+- `requirements/bim_validator.py` — bridges EAC schema to the existing `ValidationReport` storage so all validation surfaces (dashboard, BIM badges, SARIF) work without per-source forks.
+
 ## [2.8.7] — 2026-05-04
 
 ### Changed

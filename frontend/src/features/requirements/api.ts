@@ -262,13 +262,29 @@ export async function exportRequirementsCSV(
 }
 
 /**
- * Export requirements as Excel (CSV with .xlsx-friendly formatting).
- * Uses CSV with BOM for Excel compatibility.
+ * Export requirements as a real .xlsx workbook produced by the backend
+ * (formatted headers, frozen first row).  Falls back to a TSV-with-BOM
+ * blob only if the server endpoint is unreachable.
  */
 export async function exportRequirementsExcel(
   setId: string,
   requirements?: Requirement[],
 ): Promise<Blob> {
+  try {
+    const res = await fetch(`/api/v1/requirements/${setId}/export.xlsx`, {
+      headers: {
+        Authorization: `Bearer ${useAuthStore.getState().accessToken ?? ''}`,
+        'X-DDC-Client': 'OE/1.0',
+      },
+    });
+    if (res.ok) {
+      return await res.blob();
+    }
+  } catch {
+    // fall through
+  }
+
+  // Best-effort fallback: TSV with UTF-8 BOM Excel can still open
   const reqs = requirements ?? (await fetchRequirementSetDetail(setId)).requirements;
   const header = EXPORT_COLUMNS.join('\t');
   const rows = reqs.map((r) =>
@@ -281,6 +297,68 @@ export async function exportRequirementsExcel(
   return new Blob([tsv], {
     type: 'application/vnd.ms-excel;charset=utf-8',
   });
+}
+
+/* \u2500\u2500 Excel template, file import, and BIM validation \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */
+
+/** URL to download the Excel template (headers + sample row + legend). */
+export function requirementsTemplateUrl(): string {
+  return '/api/v1/requirements/template.xlsx';
+}
+
+export interface ImportFromFileResponse {
+  set_id: string;
+  imported: number;
+  skipped: number;
+  warnings: string[];
+}
+
+/** Upload an Excel/CSV file and bulk-add its rows to a requirement set. */
+export async function importRequirementsFromFile(
+  setId: string,
+  file: File,
+): Promise<ImportFromFileResponse> {
+  const fd = new FormData();
+  fd.append('file', file);
+  const res = await fetch(`/api/v1/requirements/${setId}/import/file/`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${useAuthStore.getState().accessToken ?? ''}`,
+      'X-DDC-Client': 'OE/1.0',
+    },
+    body: fd,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Import failed (${res.status}): ${text}`);
+  }
+  return res.json();
+}
+
+export interface ValidateBIMResult {
+  report_id: string;
+  status: 'passed' | 'warnings' | 'errors';
+  score: number;
+  total_checks: number;
+  passed: number;
+  warnings: number;
+  errors: number;
+  skipped_requirements: number;
+  duration_ms: number;
+}
+
+/** Run every requirement in a set against every element of a BIM model.
+ *
+ * Persists a regular ValidationReport so the existing dashboard, BIM
+ * viewer badges, and SARIF export all surface these findings.
+ */
+export async function validateRequirementSetAgainstModel(
+  setId: string,
+  modelId: string,
+): Promise<ValidateBIMResult> {
+  return apiPost<ValidateBIMResult>(
+    `/v1/requirements/${setId}/validate-bim/${modelId}`,
+  );
 }
 
 /**
