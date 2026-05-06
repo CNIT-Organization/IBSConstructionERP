@@ -5,6 +5,11 @@ All notable changes to OpenConstructionERP are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.5] — 2026-05-06
+
+### Fixed
+- `/files` document deeplink — clicking a PDF and pressing "Open in PDF Takeoff" now actually opens the file. Previous flow routed to `/documents?id=` which since v2.9.x is a `<Navigate to="/files">` redirect that drops query params, so the destination module never received the file id. New flow goes to `/takeoff?doc={id}&source=document&tab=measurements` and TakeoffPage fetches metadata from `/v1/documents/{id}` and points the viewer at `/api/v1/documents/{id}/download/`. Verified end-to-end with a real PDF rendered in the takeoff viewer.
+
 ## [2.9.4] — 2026-05-06
 
 ### Removed

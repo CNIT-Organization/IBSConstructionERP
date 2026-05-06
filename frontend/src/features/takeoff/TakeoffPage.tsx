@@ -1003,6 +1003,43 @@ export function TakeoffPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverDocuments, searchParams]);
 
+  /* ── Cross-module open: ?doc=X&source=document ─────────────────────────
+   * The unified /files page links a documents-module PDF here so the user
+   * can start measuring without re-uploading. The id namespace is the
+   * documents table, not takeoff_documents — so we fetch metadata from
+   * /v1/documents/{id} and point the viewer at that download URL. The
+   * fallback display name is read from the optional `?name=` param so
+   * the viewer header isn't empty during the metadata fetch.            */
+  useEffect(() => {
+    const docId = searchParams.get('doc');
+    const source = searchParams.get('source');
+    if (!docId || source !== 'document') return;
+    if (viewerDoc) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const meta = await apiGet<{ id: string; name: string; filename?: string }>(
+          `/v1/documents/${encodeURIComponent(docId)}`,
+        );
+        if (cancelled) return;
+        const displayName = meta.filename || meta.name || searchParams.get('name') || 'Document';
+        setActiveDocId(docId);
+        setViewerDoc({
+          url: `/api/v1/documents/${encodeURIComponent(docId)}/download/`,
+          name: displayName,
+        });
+        setActiveTab('measurements');
+      } catch {
+        // Documents-module fetch failed; leave viewer untouched so the
+        // user sees the empty state instead of a broken pdf.js attempt.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
   /* ── Mutations ──────────────────────────────────────────────────────── */
 
   const uploadMutation = useMutation({

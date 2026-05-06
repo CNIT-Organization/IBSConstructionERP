@@ -29,18 +29,26 @@ const withParam = (path: string, key: string, value?: string): string =>
 
 export const KIND_MODULES: Record<FileKind, ModuleTarget[]> = {
   document: [
+    // Primary: open the PDF in the takeoff viewer with the measurements
+    // tab pre-selected. TakeoffPage hydrates the viewer from either its
+    // own server documents OR the central documents module by id, so
+    // either source resolves the file. `&source=document` tells the
+    // viewer to fall back to the documents module's download URL.
     {
       label: 'PDF Takeoff',
       i18nKey: 'files.module.pdf_takeoff',
       description: 'Open this PDF and start measuring',
       descriptionI18nKey: 'files.module.pdf_takeoff_desc',
       icon: Ruler,
-      route: (_p, f) => withParam('/takeoff', 'doc', f),
+      route: (_p, f) =>
+        f
+          ? `/takeoff?doc=${encodeURIComponent(f)}&source=document&tab=measurements`
+          : '/takeoff',
     },
     {
       label: 'File Manager',
       i18nKey: 'files.module.documents',
-      description: 'Preview & manage versions in the file manager',
+      description: 'Stay in /files with this document selected',
       descriptionI18nKey: 'files.module.documents_desc',
       icon: FileText,
       route: (p, f) => withParam(PROJECT(p, 'files'), 'file', f),
