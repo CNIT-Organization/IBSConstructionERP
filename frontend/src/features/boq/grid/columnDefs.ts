@@ -1,5 +1,5 @@
 import type { ColDef, ValueFormatterParams, ValueGetterParams, ValueSetterParams } from 'ag-grid-community';
-import { fmtWithCurrency } from '../boqHelpers';
+import { convertToBase, fmtWithCurrency } from '../boqHelpers';
 import { unitColumnValueSetter } from './cellEditors';
 import {
   buildFormulaContext,
@@ -16,6 +16,15 @@ export interface BOQColumnContext {
   locale: string;
   fmt: Intl.NumberFormat;
   t: (key: string, opts?: Record<string, string>) => string;
+  /**
+   * Project-level FX rates. Read off the AG Grid ``params.context``
+   * (the same `gridContext` BOQGrid builds). Used by the total column's
+   * `valueGetter` to rebase positions priced in a foreign currency into
+   * the project base before the row is summed (Issue #111).
+   *
+   * Semantics: ``rate`` is "1 unit of `currency` = `rate` units of base".
+   */
+  fxRates?: Array<{ currency: string; rate: number; label?: string }>;
   /**
    * ── Display-currency override (Issue #88).
    * When set, every monetary cell rendered through `totalFormatter` is
@@ -341,19 +350,31 @@ export function getColumnDefs(context: BOQColumnContext): ColDef[] {
       // Compute total on-the-fly: for positions with resources, use
       // server-stored total; for positions without resources, always
       // show quantity × unit_rate so the user sees live updates.
+      //
+      // Issue #111 (multi-currency): when a position is priced in a
+      // non-base currency (``metadata.currency`` set), the raw total is
+      // in that currency. We rebase it into the project base currency
+      // here so the column footer / directCost can sum mixed-currency
+      // positions correctly. ``totalFormatter`` then applies the
+      // optional displayCurrency override on top of the base value.
       valueGetter: (params) => {
         const d = params.data;
         if (!d || d._isFooter || d._isSection) return d?.total ?? 0;
         const meta = (d.metadata || d.metadata_ || {}) as Record<string, unknown>;
         const resources = meta.resources;
+        let raw: number;
         if (Array.isArray(resources) && resources.length > 0) {
           // Resource-driven: server-computed total is authoritative
-          return d.total ?? 0;
+          raw = d.total ?? 0;
+        } else {
+          // No resources: live compute quantity × unit_rate
+          const q = typeof d.quantity === 'number' ? d.quantity : parseFloat(d.quantity) || 0;
+          const r = typeof d.unit_rate === 'number' ? d.unit_rate : parseFloat(d.unit_rate) || 0;
+          raw = q * r;
         }
-        // No resources: live compute quantity × unit_rate
-        const q = typeof d.quantity === 'number' ? d.quantity : parseFloat(d.quantity) || 0;
-        const r = typeof d.unit_rate === 'number' ? d.unit_rate : parseFloat(d.unit_rate) || 0;
-        return q * r;
+        const ctx = params.context as BOQColumnContext | undefined;
+        const sourceCurrency = (meta.currency as string | undefined) || ctx?.currencyCode;
+        return convertToBase(raw, sourceCurrency, ctx?.currencyCode, ctx?.fxRates);
       },
       valueFormatter: totalFormatter,
       cellClass: (params) => {

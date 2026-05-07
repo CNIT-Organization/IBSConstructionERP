@@ -422,7 +422,22 @@ async def import_requirements_file(
     item = await service.get_set(set_id)
     await verify_project_access(item.project_id, str(user_id), session)
 
+    # Bound the upload size in-memory. v2.9.12 removed the global file-size
+    # cap, so a 500 MB CSV would OOM the worker before we even start parsing.
+    # 50 MB is generous for requirement spreadsheets — typical real-world
+    # files are <2 MB. Streaming + chunked parse is a future improvement.
+    MAX_IMPORT_BYTES = 50 * 1024 * 1024  # 50 MB
     payload = await file.read()
+    if len(payload) > MAX_IMPORT_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Requirements import file is too large "
+                f"({len(payload) // (1024 * 1024)} MB). "
+                f"Maximum supported size: {MAX_IMPORT_BYTES // (1024 * 1024)} MB."
+            ),
+        )
+
     name = (file.filename or "").lower()
     if name.endswith(".csv"):
         rows, warnings = parse_csv(payload)

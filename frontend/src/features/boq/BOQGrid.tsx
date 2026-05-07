@@ -804,6 +804,12 @@ const BOQGrid = forwardRef<BOQGridHandle, BOQGridProps>(function BOQGrid({
       // Issue #90: FormulaCellEditor reads onFormulaApplied via context
       // because the Quantity column doesn't supply cellEditorParams.
       onFormulaApplied,
+      // v2.9.29 — full-width resource rows iterate `customColumns` to
+      // render slots aligned with regional-preset columns; reading
+      // `positions` lets the renderer surface per-resource custom_fields
+      // values without a network round-trip.
+      positions,
+      customColumns,
     }) as FullGridContext,
     [currencySymbol, currencyCode, fxRates, displayCurrency, onOpenFxRateSettings, locale, fmt, t, collapsedSections, onToggleSection, onAddPosition,
      expandedPositions, toggleResources, onRemoveResource, onUpdateResource, onUpdateResourceFields,
@@ -811,7 +817,8 @@ const BOQGrid = forwardRef<BOQGridHandle, BOQGridProps>(function BOQGrid({
      openVariantPickerSignal, openVariantPickerFor, clearOpenVariantPicker, openPositionVariantPicker, onUpdateVariantHeader,
      onDeletePosition, onSaveToDatabase, onAddComment,
      onDuplicatePosition, showContextMenu, anomalyMap, onApplyAnomalySuggestion, bimModelId,
-     onUpdatePosition, onHighlightBIMElements, onDeleteSection, onReorderSections, onFormulaApplied],
+     onUpdatePosition, onHighlightBIMElements, onDeleteSection, onReorderSections, onFormulaApplied,
+     positions, customColumns],
   );
 
   /* ── Column defs (standard + custom) ─────────────────────────────── */
@@ -1096,7 +1103,14 @@ const BOQGrid = forwardRef<BOQGridHandle, BOQGridProps>(function BOQGrid({
 
   /* ── Build row data from positions ────────────────────────────── */
   const rowData: GridRow[] = useMemo(() => {
-    const { sections, ungrouped } = groupPositionsIntoSections(positions);
+    // Issue #111 — section subtotals must rebase per-position currencies
+    // into the project base before summing. Pass the active project FX
+    // table; ``groupPositionsIntoSections`` falls back to raw totals when
+    // no FX is supplied so non-multi-currency BOQs see no behaviour change.
+    const { sections, ungrouped } = groupPositionsIntoSections(positions, {
+      baseCurrency: currencyCode,
+      fxRates: fxRates ?? [],
+    });
     const rows: GridRow[] = [];
 
     // Ungrouped positions first

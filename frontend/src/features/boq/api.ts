@@ -154,13 +154,39 @@ export interface SectionGroup {
   subtotal: number;
 }
 
-export function groupPositionsIntoSections(positions: Position[]): {
+export function groupPositionsIntoSections(
+  positions: Position[],
+  /**
+   * Optional FX context (Issue #111). When supplied, child positions
+   * priced in a non-base currency (``metadata.currency``) are converted
+   * into ``baseCurrency`` before being added to the section subtotal.
+   * Without this, mixed-currency BOQs sum foreign-currency totals
+   * directly into base subtotals, producing nonsensical figures.
+   */
+  fxOpts?: {
+    baseCurrency?: string;
+    fxRates?: Array<{ currency: string; rate: number }>;
+  },
+): {
   sections: SectionGroup[];
   ungrouped: Position[];
 } {
   const sections: SectionGroup[] = [];
   const ungrouped: Position[] = [];
   const sectionMap = new Map<string, SectionGroup>();
+  const baseCurrency = fxOpts?.baseCurrency;
+  const fxRates = fxOpts?.fxRates;
+
+  const rebase = (pos: Position): number => {
+    if (!baseCurrency) return pos.total;
+    const meta = ((pos as { metadata?: Record<string, unknown> }).metadata
+      ?? {}) as Record<string, unknown>;
+    const sourceCurrency = (meta.currency as string | undefined) || baseCurrency;
+    if (sourceCurrency === baseCurrency || !fxRates) return pos.total;
+    const fx = fxRates.find((r) => r.currency === sourceCurrency);
+    if (!fx || !Number.isFinite(fx.rate) || fx.rate <= 0) return pos.total;
+    return pos.total * fx.rate;
+  };
 
   // First pass: identify sections
   const sortedPositions = [...positions].sort((a, b) => {
@@ -183,7 +209,7 @@ export function groupPositionsIntoSections(positions: Position[]): {
     if (pos.parent_id && sectionMap.has(pos.parent_id)) {
       const group = sectionMap.get(pos.parent_id)!;
       group.children.push(pos);
-      group.subtotal += pos.total;
+      group.subtotal += rebase(pos);
     } else {
       ungrouped.push(pos);
     }

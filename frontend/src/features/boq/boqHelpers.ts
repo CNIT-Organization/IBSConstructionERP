@@ -422,6 +422,47 @@ export function fmtWithCurrency(
   }
 }
 
+/* ── Multi-currency rebase (Issue #88 / #111) ───────────────────────────
+ * Convert a value from a position's source currency into the project's
+ * base currency. Project FX rates are stored as ``rate`` per currency,
+ * with semantics: ``1 unit of the foreign currency = rate base units``.
+ * So foreign → base is multiplication.
+ *
+ * Returns the value unchanged when:
+ *   - source currency is empty / undefined / equals base
+ *   - no FX rate exists for the source currency (best-effort, with a
+ *     console warning so the dev tools surface the gap)
+ *   - the rate is non-finite or non-positive
+ *
+ * This was missing in v2.9.1's #88 fix — positions priced in a foreign
+ * currency had their ``total`` summed into directCost as if it were
+ * already in base. Issue #111 surfaced the bug for ARS-priced positions
+ * inside a USD project.
+ */
+export function convertToBase(
+  value: number,
+  sourceCurrency: string | undefined | null,
+  baseCurrency: string | undefined | null,
+  fxRates: Array<{ currency: string; rate: number }> | undefined | null,
+): number {
+  if (!Number.isFinite(value)) return 0;
+  if (!sourceCurrency) return value;
+  if (!baseCurrency || sourceCurrency === baseCurrency) return value;
+  const list = fxRates ?? [];
+  const fx = list.find((r) => r.currency === sourceCurrency);
+  if (!fx || !Number.isFinite(fx.rate) || fx.rate <= 0) {
+    // No rate configured — surface the gap in dev tools but don't crash.
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn(
+        `[boq] no FX rate for ${sourceCurrency} → ${baseCurrency}; ` +
+        `position total left unconverted.`,
+      );
+    }
+    return value;
+  }
+  return value * fx.rate;
+}
+
 /* ── Quality Score ───────────────────────────────────────────────────── */
 
 export interface QualityBreakdown {

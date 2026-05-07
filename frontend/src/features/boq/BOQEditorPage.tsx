@@ -62,6 +62,7 @@ import {
   getCurrencyCode,
   createFormatter,
   fmtWithCurrency,
+  convertToBase,
   computeQualityScore,
   type QualityBreakdown,
   type Tip,
@@ -1300,8 +1301,18 @@ export function BOQEditorPage() {
 
   const directCost = useMemo(() => {
     if (!boq) return 0;
-    return boq.positions.reduce((sum, p) => sum + p.total, 0);
-  }, [boq]);
+    // Issue #111 — rebase per-position currencies into the project base
+    // before summing. A position priced in ARS with metadata.currency='ARS'
+    // and project base USD must be multiplied by the ARS→USD FX rate
+    // before being added to a USD-priced sibling. Without this, mixed-
+    // currency BOQs add foreign-currency totals as-if they were base.
+    return boq.positions.reduce((sum, p) => {
+      const meta = ((p as { metadata?: Record<string, unknown> }).metadata
+        ?? {}) as Record<string, unknown>;
+      const sourceCurrency = (meta.currency as string | undefined) || currencyCode;
+      return sum + convertToBase(p.total, sourceCurrency, currencyCode, fxRates);
+    }, 0);
+  }, [boq, currencyCode, fxRates]);
 
   const markupTotals = useMemo(() => {
     let running = directCost;

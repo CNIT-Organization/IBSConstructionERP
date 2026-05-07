@@ -36,18 +36,26 @@ const VARIANTS: CostVariant[] = [
   { index: 2, label: 'C35/45', price: 215, price_per_unit: null },
 ];
 
-const COL_WIDTHS = {
-  leftPad: 0,
-  ordinal: 60,
-  bimLink: 28,
-  classification: 0,
-  unit: 60,
-  bimQty: 28,
-  quantity: 80,
-  unitRate: 100,
-  total: 100,
-  actions: 60,
-};
+/* v2.9.29 — EditableResourceRow now drives its layout from a live AG Grid
+ *  column list (slots) plus a ``leftPad`` left-indent. Tests build a static
+ *  slot list with widths matching the previous COL_WIDTHS map so the
+ *  rendered output is identical to the pre-refactor structure. */
+const SLOTS = [
+  { colId: '_drag', width: 0 },
+  { colId: '_checkbox', width: 0 },
+  { colId: '_expand', width: 0 },
+  { colId: 'ordinal', width: 60 },
+  { colId: '_bim_link', width: 28 },
+  { colId: 'description', width: 200 },
+  { colId: 'classification', width: 0 },
+  { colId: 'unit', width: 60 },
+  { colId: '_bim_qty', width: 28 },
+  { colId: 'quantity', width: 80 },
+  { colId: 'unit_rate', width: 100 },
+  { colId: 'total', width: 100 },
+  { colId: '_actions', width: 60 },
+];
+const LEFT_PAD = 0;
 
 function renderRow({
   resourceData = {},
@@ -98,7 +106,7 @@ function renderRow({
     // EditableResourceRow expects a ctx typed as FullGridContext but only reads
     // the fields above — cast loosely so tests stay legible.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    <EditableResourceRow data={data} ctx={fullCtx as any} colWidths={COL_WIDTHS} />,
+    <EditableResourceRow data={data} ctx={fullCtx as any} slots={SLOTS} leftPad={LEFT_PAD} />,
   );
   return { onRepickResourceVariant };
 }

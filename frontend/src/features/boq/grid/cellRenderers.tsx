@@ -1,7 +1,8 @@
 import { useState, useCallback, useRef, useMemo, useEffect, useLayoutEffect, forwardRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import type { ICellRendererParams } from 'ag-grid-community';
+import type { ICellRendererParams, Column, GridApi } from 'ag-grid-community';
+import type { Position } from '../api';
 import {
   ChevronDown,
   ChevronRight,
@@ -396,6 +397,16 @@ export type FullGridContext = ActionsContext & ResourceGridContext & SectionGrou
    * currency picker. Empty / undefined ⇒ single-currency project.
    */
   fxRates?: { currency: string; rate: number; label?: string }[];
+  /**
+   * Live BOQ positions — used by full-width resource rows to render
+   * per-resource custom-field values (read-only) without a separate
+   * round-trip. Optional; when omitted, custom-column slots on resource
+   * rows render empty placeholders that still preserve grid alignment.
+   */
+  positions?: Position[];
+  /** Custom column definitions — used to map ``custom_*`` colIds back to
+   *  the stored ``custom_fields`` key. Optional. */
+  customColumns?: { name: string; display_name?: string }[];
 };
 
 /* ── Actions Cell Renderer ────────────────────────────────────────── */
@@ -2194,7 +2205,74 @@ function InlineTextInput({
 
 /* ── Editable Resource Row ───────────────────────────────────────── */
 
-interface ColWidths { leftPad: number; ordinal: number; bimLink: number; classification: number; unit: number; bimQty: number; quantity: number; unitRate: number; total: number; actions: number }
+/* ── Column slot model ───────────────────────────────────────────────
+ *  v2.9.29 — full-width resource rows now drive their layout from the
+ *  live AG Grid column list rather than from a fixed ``ColWidths`` map.
+ *  This is what fixes the "custom regional-preset columns shift the
+ *  resource numeric slots" bug: with N custom columns inserted between
+ *  ``total`` and ``_actions``, the resource row used to absorb that N×W
+ *  width into its ``flex-1`` name slot, knocking unit/qty/rate/total
+ *  out of vertical alignment with the position rows above. By iterating
+ *  ``api.getAllDisplayedColumns()`` and rendering one fixed-width slot
+ *  per column, the resource row now matches the grid's column geometry
+ *  exactly — custom columns included. */
+interface ColumnSlot {
+  colId: string;
+  width: number;
+}
+
+/**
+ * Subscribe to AG Grid's column-state events and return the live list
+ * of displayed columns (id + actual width). The resource full-width
+ * renderer reads this list every render so its slot geometry stays in
+ * lock-step with the grid (drag-resize, custom-column add/remove, hide
+ * via Manage Columns dialog, etc.).
+ *
+ * Why state + event listeners instead of `useMemo([api])`: AG Grid does
+ * NOT change `api` identity when columns resize or visibility toggles,
+ * so a memo keyed only on `api` would never invalidate. We mirror the
+ * same pattern BOQGrid uses for `refreshCells` after positions change.
+ */
+function useDisplayedColumnSlots(api: GridApi | undefined | null): ColumnSlot[] {
+  const [, force] = useState(0);
+  useEffect(() => {
+    if (!api) return undefined;
+    const bump = () => force((n) => n + 1);
+    // Cover every event that can change column geometry. AG Grid v32
+    // fires individual events for resize / visibility / move; covering
+    // all three keeps the resource row aligned during any user gesture.
+    api.addEventListener('columnResized', bump);
+    api.addEventListener('columnVisible', bump);
+    api.addEventListener('columnMoved', bump);
+    api.addEventListener('displayedColumnsChanged', bump);
+    return () => {
+      api.removeEventListener('columnResized', bump);
+      api.removeEventListener('columnVisible', bump);
+      api.removeEventListener('columnMoved', bump);
+      api.removeEventListener('displayedColumnsChanged', bump);
+    };
+  }, [api]);
+  if (!api) return [];
+  const cols: Column[] = api.getAllDisplayedColumns?.() ?? [];
+  return cols.map((c) => ({ colId: c.getColId(), width: c.getActualWidth() }));
+}
+
+/**
+ * Compose the ``leftPad`` (the visual left-indent that pushes the
+ * resource's code chip noticeably to the right of the position
+ * ordinal) from the three pre-ordinal columns plus a 56px nudge.
+ * We hide the slots for these three columns and absorb their width
+ * into a single padding-left value on the row container — this keeps
+ * the indent independent of column-resize drift on the helper cols.
+ */
+function computeLeftPad(slots: ColumnSlot[]): number {
+  const get = (id: string) => slots.find((s) => s.colId === id)?.width ?? 0;
+  return get('_drag') + get('_checkbox') + get('_expand') + 56;
+}
+
+/** Columns that contribute to ``leftPad`` and therefore should NOT be
+ *  rendered as standalone slots (their width is already in the pad). */
+const LEFT_PAD_COL_IDS = new Set<string>(['_drag', '_checkbox', '_expand']);
 
 /**
  * Inline unit input for resource rows. Accepts free-form values and
@@ -2972,7 +3050,7 @@ function CurrencyOption({
   );
 }
 
-export function EditableResourceRow({ data, ctx, colWidths }: { data: Record<string, unknown>; ctx: FullGridContext; colWidths: ColWidths }) {
+export function EditableResourceRow({ data, ctx, slots, leftPad }: { data: Record<string, unknown>; ctx: FullGridContext; slots: ColumnSlot[]; leftPad: number }) {
   const resourceType = (data._resourceType as string) || 'other';
   const qty = (data._resourceQty as number) ?? 0;
   const rate = (data._resourceRate as number) ?? 0;
@@ -3364,6 +3442,297 @@ export function EditableResourceRow({ data, ctx, colWidths }: { data: Record<str
     });
   })();
 
+  /* ── Per-slot renderers ──────────────────────────────────────────
+   *  Each function returns the resource-row content for one AG Grid
+   *  column. The outer ``return`` below maps over ``slots`` and either
+   *  invokes one of these (for known column IDs) or renders an empty
+   *  placeholder of the right width (for everything else, including the
+   *  custom regional-preset columns whose values are read directly from
+   *  the parent position metadata via ``ctx.positions``). The slot
+   *  geometry therefore matches the live grid columns 1:1 — adding,
+   *  removing, hiding, or resizing any column repositions the resource
+   *  row in lock-step with the position rows. */
+  const renderOrdinalSlot = (width: number) => (
+    <span
+      key="ordinal"
+      className="shrink-0 inline-flex items-center justify-end self-center pr-2 text-[8px] font-mono whitespace-nowrap overflow-hidden"
+      style={{ width: `${width}px` }}
+      title={resourceCode
+        ? ctx.t('boq.resource_catalog_code', { defaultValue: 'Catalogue code: {{code}}', code: resourceCode })
+        : ctx.t('boq.resource_customised', { defaultValue: 'Customised resource — no catalogue code' })}
+    >
+      {resourceCode ? (
+        <span className="px-1 py-0.5 rounded bg-surface-secondary/60 text-content-quaternary">
+          {resourceCode}
+        </span>
+      ) : (
+        <span className="text-content-quaternary/50">—</span>
+      )}
+    </span>
+  );
+
+  const renderBimLinkSlot = (width: number) => (
+    <span
+      key="_bim_link"
+      className="shrink-0 inline-flex items-center justify-end self-center pl-2 pr-3"
+      style={{ width: `${width}px` }}
+    >
+      <ResourceTypePicker
+        value={resourceType}
+        onChange={handleTypeChange}
+        t={ctx.t}
+        isVariant={hasVariants}
+      />
+    </span>
+  );
+
+  const renderDescriptionSlot = (width: number) => (
+    <span
+      key="description"
+      className="shrink-0 truncate min-w-0 self-center text-left text-content-secondary font-medium inline-flex items-center gap-1 pl-1"
+      style={{ width: `${width}px` }}
+    >
+      {hasVariants && (
+        <span
+          aria-hidden="true"
+          title={ctx.t('boq.resource_is_variant_badge', {
+            defaultValue: 'Variant resource — multiple price options available',
+          })}
+          className="shrink-0 relative inline-flex h-[18px] w-[18px] items-center justify-center
+                     rounded-full overflow-hidden
+                     bg-gradient-to-br from-violet-500 via-purple-500 to-fuchsia-600
+                     text-white text-[9px] font-extrabold leading-none tracking-wider
+                     ring-1 ring-white/30
+                     shadow-[0_1px_3px_rgba(139,92,246,0.5),0_0_0_1px_rgba(139,92,246,0.2)]"
+          data-testid={`resource-variant-badge-${data._resourceIndex}`}
+        >
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-0 top-0 h-1/2 rounded-t-full
+                       bg-gradient-to-b from-white/35 to-transparent"
+          />
+          <span className="relative z-10 drop-shadow-[0_1px_1px_rgba(0,0,0,0.25)]">V</span>
+        </span>
+      )}
+      <InlineTextInput value={originalName} onCommit={handleNameChange} className="flex-1 min-w-0 text-xs text-left" />
+    </span>
+  );
+
+  const renderUnitSlot = (width: number) => (
+    <span
+      key="unit"
+      className="shrink-0 text-center text-content-tertiary self-center px-2"
+      style={{ width: `${width}px` }}
+    >
+      <InlineUnitInput
+        value={data._resourceUnit as string}
+        onCommit={(v: string) => ctx.onUpdateResource?.(posId, resIdx, 'unit', v)}
+        className="w-full text-xs text-center"
+      />
+    </span>
+  );
+
+  const renderQuantitySlot = (width: number) => (
+    <span
+      key="quantity"
+      className="shrink-0 text-right tabular-nums text-content-secondary self-center pr-1 pl-1"
+      style={{ width: `${width}px` }}
+    >
+      <InlineNumberInput value={qty} onCommit={handleQtyChange} fmt={ctx.fmt} className="w-full text-xs" />
+    </span>
+  );
+
+  const renderUnitRateSlot = (width: number) => (
+    <span
+      key="unit_rate"
+      className="shrink-0 inline-flex items-center justify-end self-center gap-1 pr-2 pl-2"
+      style={{ width: `${width}px` }}
+    >
+      {canRepick && (
+        <button
+          ref={variantPillRef}
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setVariantPickerOpen((open) => !open);
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          className={`shrink-0 inline-flex items-center gap-0.5 h-4 px-1 rounded text-[9px] font-semibold
+                      transition-colors cursor-pointer ${
+                        resourceVariant
+                          ? 'bg-oe-blue/15 text-oe-blue hover:bg-oe-blue/25'
+                          : resourceVariantDefault
+                          ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900/60'
+                          : 'bg-surface-tertiary/60 text-content-secondary hover:bg-surface-tertiary'
+                      }`}
+          title={variantPillTooltip}
+          aria-label={variantPillTooltip}
+          aria-haspopup="dialog"
+          aria-expanded={variantPickerOpen}
+          data-testid={`resource-variant-pill-${data._resourceIndex}`}
+        >
+          {ctx.t('boq.resource_variant_pill', {
+            defaultValue: '▾ {{count}}',
+            count: availableVariantStats!.count,
+          })}
+        </button>
+      )}
+      <InlineNumberInput
+        value={rate}
+        onCommit={handleRateChange}
+        fmt={ctx.fmt}
+        className="flex-1 min-w-0 text-right tabular-nums text-content-secondary text-xs"
+      />
+      <ResourceCurrencyCombobox
+        value={resourceCurrency}
+        onCommit={handleCurrencyChange}
+        projectGroup={projectGroup}
+        otherGroup={otherGroup}
+        fxRate={fxRate}
+        fxSource={fxSource}
+        baseCode={baseCurrency}
+        onCommitFxRate={handleGlobalFxRateChange}
+        isForeign={isForeign}
+        t={ctx.t}
+      />
+      {variantPickerOpen && hasVariants && (
+        <VariantPicker
+          variants={availableVariants!}
+          stats={availableVariantStats!}
+          defaultStrategy="mean"
+          defaultIndex={resourceVariant?.index}
+          anchorEl={variantPillRef.current}
+          unitLabel={(data._resourceUnit as string) || ''}
+          currency={resourceCurrency}
+          onApply={handleRepick}
+          onUseDefault={handleRepickUseDefault}
+          onClose={closeVariantPicker}
+        />
+      )}
+    </span>
+  );
+
+  const renderTotalSlot = (width: number) => (
+    <span
+      key="total"
+      className="shrink-0 text-right tabular-nums font-medium text-content-primary flex items-center justify-end gap-1 self-center pr-2 pl-2"
+      style={{ width: `${width}px` }}
+      title={totalTitle}
+    >
+      {isForeign && !hasFxRate && (
+        ctx.onOpenFxRateSettings ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              ctx.onOpenFxRateSettings?.();
+            }}
+            className="inline-flex items-center justify-center h-3 px-1 rounded
+                       text-[8px] font-bold uppercase cursor-pointer
+                       bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300
+                       hover:bg-amber-200 hover:text-amber-900
+                       dark:hover:bg-amber-800/60 dark:hover:text-amber-100
+                       focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-500
+                       transition-colors"
+            title={ctx.t('boq.resource_no_fx_rate_click', {
+              defaultValue: 'No FX rate configured for {{code}} — click to set one in Project Settings',
+              code: resourceCurrency,
+            })}
+            aria-label={ctx.t('boq.resource_no_fx_rate_click', {
+              defaultValue: 'No FX rate configured for {{code}} — click to set one in Project Settings',
+              code: resourceCurrency,
+            })}
+          >
+            <AlertTriangle size={10} strokeWidth={2} className="me-0.5 inline-block" /> {ctx.t('boq.resource_no_fx_short', { defaultValue: 'set FX' })}
+          </button>
+        ) : (
+          <span
+            className="inline-flex items-center justify-center h-3 px-1 rounded
+                       text-[8px] font-bold uppercase
+                       bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+            title={ctx.t('boq.resource_no_fx_rate', {
+              defaultValue: 'No FX rate configured for {{code}} — total shown in {{code}}',
+              code: resourceCurrency,
+            })}
+          >
+            <AlertTriangle size={10} strokeWidth={2} className="me-0.5 inline-block" /> no FX
+          </span>
+        )
+      )}
+      <span>{formattedTotal}</span>
+    </span>
+  );
+
+  const renderActionsSlot = (width: number) => (
+    <span
+      key="_actions"
+      className="shrink-0 flex items-center justify-center gap-0.5 self-center"
+      style={{ width: `${width}px` }}
+    >
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          ctx.onSaveResourceToCatalog?.(posId, resIdx);
+        }}
+        className="shrink-0 h-4 w-4 flex items-center justify-center rounded
+                   text-content-tertiary hover:text-oe-blue hover:bg-oe-blue-subtle
+                   opacity-0 group-hover/res:opacity-100 transition-all"
+        title={ctx.t('boq.save_to_catalog', { defaultValue: 'Save to My Catalog' })}
+      >
+        <BookmarkPlus size={10} />
+      </button>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          ctx.onRemoveResource?.(posId, resIdx);
+        }}
+        className="shrink-0 h-4 w-4 flex items-center justify-center rounded
+                   text-content-tertiary hover:text-semantic-error hover:bg-semantic-error-bg
+                   opacity-0 group-hover/res:opacity-100 transition-all"
+      >
+        <X size={10} />
+      </button>
+    </span>
+  );
+
+  const renderCustomColumnSlot = (slot: ColumnSlot) => {
+    // Custom column (``custom_<name>``) — surface the per-resource value
+    // if present, falling back to the parent position's value (mirrors
+    // the column-defs valueGetter logic in columnDefs.ts so the value
+    // is consistent regardless of which row type renders the cell).
+    // Read-only for v2.9.29; per-resource editing on custom cols is a
+    // follow-up.
+    const fieldName = slot.colId.slice('custom_'.length);
+    const parent = ctx.positions?.find((p) => p.id === posId);
+    let display = '';
+    if (parent) {
+      const meta = parent.metadata as Record<string, unknown> | undefined;
+      const resources = meta?.resources as Array<Record<string, unknown>> | undefined;
+      const resMeta = resources?.[resIdx]?.metadata as Record<string, unknown> | undefined;
+      const resCf = resMeta?.custom_fields as Record<string, unknown> | undefined;
+      const resVal = resCf?.[fieldName];
+      if (resVal !== undefined && resVal !== null && resVal !== '') {
+        display = String(resVal);
+      } else {
+        const cf = meta?.custom_fields as Record<string, unknown> | undefined;
+        const parentVal = cf?.[fieldName];
+        if (parentVal !== undefined && parentVal !== null && parentVal !== '') {
+          display = String(parentVal);
+        }
+      }
+    }
+    return (
+      <span
+        key={slot.colId}
+        className="shrink-0 self-center text-xs text-content-tertiary truncate px-2 italic"
+        style={{ width: `${slot.width}px` }}
+        title={display}
+      >
+        {display}
+      </span>
+    );
+  };
+
   return (
     <div
       // Uniform "sub-row under a position" treatment for ALL resources
@@ -3376,7 +3745,7 @@ export function EditableResourceRow({ data, ctx, colWidths }: { data: Record<str
                  bg-surface-secondary/35 dark:bg-surface-secondary/25
                  shadow-[inset_0_2px_3px_-1px_rgba(0,0,0,0.05)] dark:shadow-[inset_0_2px_3px_-1px_rgba(0,0,0,0.30)]
                  hover:bg-surface-secondary/55 dark:hover:bg-surface-secondary/40"
-      style={{ paddingLeft: `${colWidths.leftPad}px`, paddingRight: '4px' }}
+      style={{ paddingLeft: `${leftPad}px`, paddingRight: '4px' }}
       onContextMenu={(e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -3403,270 +3772,49 @@ export function EditableResourceRow({ data, ctx, colWidths }: { data: Record<str
         />
       )}
 
-      {/* LEFT section — three slots that MIRROR the AG Grid columns
-          (ordinal, _bim_link, description) 1:1, so resource code lines
-          up under position ordinal, resource tag lines up under the
-          BIM-link column, and resource name starts where the position
-          description starts. Widths are read from the live grid via
-          colWidths, padding mirrors AG Grid's --ag-cell-horizontal-padding
-          equivalent (pr-2 / pl-1 = same as the column cellClass
-          overrides) so right edges and left edges line up exactly. */}
-
-      {/* Code — width = ordinal column. Right-aligned with pr-2 to match
-          the position ordinal cell's `text-right !pr-2`, so the code's
-          right edge sits on the same X as the ordinal's right edge. */}
-      <span
-        className="shrink-0 inline-flex items-center justify-end self-center pr-2 text-[8px] font-mono whitespace-nowrap overflow-hidden"
-        style={{ width: `${colWidths.ordinal}px` }}
-        title={resourceCode
-          ? ctx.t('boq.resource_catalog_code', { defaultValue: 'Catalogue code: {{code}}', code: resourceCode })
-          : ctx.t('boq.resource_customised', { defaultValue: 'Customised resource — no catalogue code' })}
-      >
-        {resourceCode ? (
-          <span className="px-1 py-0.5 rounded bg-surface-secondary/60 text-content-quaternary">
-            {resourceCode}
-          </span>
-        ) : (
-          <span className="text-content-quaternary/50">—</span>
-        )}
-      </span>
-
-      {/* Tag — width = _bim_link column. Right-aligned so tag right
-          edges line up across all rows. ``pr-3`` keeps a 12px gap from
-          the start of the name slot; ``pl-2`` provides minimal padding
-          from the code chip when the bim_link column is at its
-          narrowest. The chip is right-anchored within this slot so the
-          left edge of the name slot can start at the SAME X as the
-          position description's left edge (visual spine). */}
-      <span
-        className="shrink-0 inline-flex items-center justify-end self-center pl-2 pr-3"
-        style={{ width: `${colWidths.bimLink}px` }}
-      >
-        <ResourceTypePicker
-          value={resourceType}
-          onChange={handleTypeChange}
-          t={ctx.t}
-          isVariant={hasVariants}
-        />
-      </span>
-
-      {/* Name — flex-1, mirrors the position description column.
-          ``pl-1`` (4px) matches the position description column's
-          ``!pl-1`` cellClass so the resource name's left edge lands on
-          the EXACT same X as the position description text — the
-          vertical spine the user requested. Visual gap from the type
-          chip is preserved by the chip slot's ``pr-3`` (12px). */}
-      <span className="truncate min-w-0 flex-1 self-center text-left text-content-secondary font-medium inline-flex items-center gap-1 pl-1">
-        {hasVariants && (
-          <span
-            aria-hidden="true"
-            title={ctx.t('boq.resource_is_variant_badge', {
-              defaultValue: 'Variant resource — multiple price options available',
-            })}
-            className="shrink-0 relative inline-flex h-[18px] w-[18px] items-center justify-center
-                       rounded-full overflow-hidden
-                       bg-gradient-to-br from-violet-500 via-purple-500 to-fuchsia-600
-                       text-white text-[9px] font-extrabold leading-none tracking-wider
-                       ring-1 ring-white/30
-                       shadow-[0_1px_3px_rgba(139,92,246,0.5),0_0_0_1px_rgba(139,92,246,0.2)]"
-            data-testid={`resource-variant-badge-${data._resourceIndex}`}
-          >
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-x-0 top-0 h-1/2 rounded-t-full
-                         bg-gradient-to-b from-white/35 to-transparent"
-            />
-            <span className="relative z-10 drop-shadow-[0_1px_1px_rgba(0,0,0,0.25)]">V</span>
-          </span>
-        )}
-        <InlineTextInput value={originalName} onCommit={handleNameChange} className="flex-1 min-w-0 text-xs text-left" />
-      </span>
-
-      {/* Classification spacer — hidden by default (width 0) but reserved so
-          that toggling it on doesn't break alignment. */}
-      {colWidths.classification > 0 && (
-        <span className="shrink-0 self-center" style={{ width: `${colWidths.classification}px` }} aria-hidden="true" />
-      )}
-
-      {/* RIGHT section — unit / [bim_qty spacer] / qty / rate / total / actions
-          are direct siblings of the outer flex container with NO inter-slot
-          gap, so their X coordinates exactly match the position row's AG
-          Grid columns. Per UX request: unit on every resource row must
-          sit on the same vertical X as unit on every position row. */}
-      <span className="shrink-0 text-center text-content-tertiary self-center px-2" style={{ width: `${colWidths.unit}px` }}>
-        <InlineUnitInput
-          value={data._resourceUnit as string}
-          onCommit={(v: string) => ctx.onUpdateResource?.(posId, resIdx, 'unit', v)}
-          className="w-full text-xs text-center"
-        />
-      </span>
-
-      {/* _bim_qty spacer — the position grid has a 28px BIM-quantity-picker
-          column between unit and quantity. The resource row has no
-          equivalent feature (a resource has no BIM link), so we render an
-          empty placeholder of the exact same width. Without this spacer
-          every resource numeric value (qty / rate / total / actions) sits
-          28px LEFT of the position row. */}
-      {colWidths.bimQty > 0 && (
-        <span className="shrink-0 self-center" style={{ width: `${colWidths.bimQty}px` }} aria-hidden="true" />
-      )}
-
-      {/* Qty — slot pr-1/pl-1 (4px) + InlineNumberInput's display-span
-          px-1 (4px) sums to 8px, matching the position quantity cell's
-          `!pr-2 !pl-2`. Without this compensation the resource qty
-          number sits 4px LEFT of the position qty number. */}
-      <span className="shrink-0 text-right tabular-nums text-content-secondary self-center pr-1 pl-1" style={{ width: `${colWidths.quantity}px` }}>
-        <InlineNumberInput value={qty} onCommit={handleQtyChange} fmt={ctx.fmt} className="w-full text-xs" />
-      </span>
-
-      {/* Unit rate slot — wraps the rate number AND the currency button
-          together so the currency is visually attached to the price
-          (it labels the price, not the unit). Currency button hosts
-          the FX-rate editor in its popover when the row uses a foreign
-          currency, so we don't need an extra inline FX widget. pr-2/pl-2
-          mirror the position cell padding so the rate text right edge
-          (before the currency chip) aligns with the position rate. */}
-      <span
-        className="shrink-0 inline-flex items-center justify-end self-center gap-1 pr-2 pl-2"
-        style={{ width: `${colWidths.unitRate}px` }}
-      >
-        {canRepick && (
-          <button
-            ref={variantPillRef}
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setVariantPickerOpen((open) => !open);
-            }}
-            onMouseDown={(e) => e.stopPropagation()}
-            className={`shrink-0 inline-flex items-center gap-0.5 h-4 px-1 rounded text-[9px] font-semibold
-                        transition-colors cursor-pointer ${
-                          resourceVariant
-                            ? 'bg-oe-blue/15 text-oe-blue hover:bg-oe-blue/25'
-                            : resourceVariantDefault
-                            ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900/60'
-                            : 'bg-surface-tertiary/60 text-content-secondary hover:bg-surface-tertiary'
-                        }`}
-            title={variantPillTooltip}
-            aria-label={variantPillTooltip}
-            aria-haspopup="dialog"
-            aria-expanded={variantPickerOpen}
-            data-testid={`resource-variant-pill-${data._resourceIndex}`}
-          >
-            {ctx.t('boq.resource_variant_pill', {
-              defaultValue: '\u25BE {{count}}',
-              count: availableVariantStats!.count,
-            })}
-          </button>
-        )}
-        <InlineNumberInput
-          value={rate}
-          onCommit={handleRateChange}
-          fmt={ctx.fmt}
-          className="flex-1 min-w-0 text-right tabular-nums text-content-secondary text-xs"
-        />
-        <ResourceCurrencyCombobox
-          value={resourceCurrency}
-          onCommit={handleCurrencyChange}
-          projectGroup={projectGroup}
-          otherGroup={otherGroup}
-          fxRate={fxRate}
-          fxSource={fxSource}
-          baseCode={baseCurrency}
-          onCommitFxRate={handleGlobalFxRateChange}
-          isForeign={isForeign}
-          t={ctx.t}
-        />
-        {variantPickerOpen && hasVariants && (
-          <VariantPicker
-            variants={availableVariants!}
-            stats={availableVariantStats!}
-            defaultStrategy="mean"
-            defaultIndex={resourceVariant?.index}
-            anchorEl={variantPillRef.current}
-            unitLabel={(data._resourceUnit as string) || ''}
-            currency={resourceCurrency}
-            onApply={handleRepick}
-            onUseDefault={handleRepickUseDefault}
-            onClose={closeVariantPicker}
-          />
-        )}
-      </span>
-
-      <span
-        className="shrink-0 text-right tabular-nums font-medium text-content-primary flex items-center justify-end gap-1 self-center pr-2 pl-2"
-        style={{ width: `${colWidths.total}px` }}
-        title={totalTitle}
-      >
-        {isForeign && !hasFxRate && (
-          ctx.onOpenFxRateSettings ? (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                ctx.onOpenFxRateSettings?.();
-              }}
-              className="inline-flex items-center justify-center h-3 px-1 rounded
-                         text-[8px] font-bold uppercase cursor-pointer
-                         bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300
-                         hover:bg-amber-200 hover:text-amber-900
-                         dark:hover:bg-amber-800/60 dark:hover:text-amber-100
-                         focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-500
-                         transition-colors"
-              title={ctx.t('boq.resource_no_fx_rate_click', {
-                defaultValue: 'No FX rate configured for {{code}} — click to set one in Project Settings',
-                code: resourceCurrency,
-              })}
-              aria-label={ctx.t('boq.resource_no_fx_rate_click', {
-                defaultValue: 'No FX rate configured for {{code}} — click to set one in Project Settings',
-                code: resourceCurrency,
-              })}
-            >
-              <AlertTriangle size={10} strokeWidth={2} className="me-0.5 inline-block" /> {ctx.t('boq.resource_no_fx_short', { defaultValue: 'set FX' })}
-            </button>
-          ) : (
-            <span
-              className="inline-flex items-center justify-center h-3 px-1 rounded
-                         text-[8px] font-bold uppercase
-                         bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
-              title={ctx.t('boq.resource_no_fx_rate', {
-                defaultValue: 'No FX rate configured for {{code}} — total shown in {{code}}',
-                code: resourceCurrency,
-              })}
-            >
-              <AlertTriangle size={10} strokeWidth={2} className="me-0.5 inline-block" /> no FX
-            </span>
-          )
-        )}
-        <span>{formattedTotal}</span>
-      </span>
-
-      {/* Actions — aligned to grid Actions column */}
-      <span className="shrink-0 flex items-center justify-center gap-0.5 self-center" style={{ width: `${colWidths.actions}px` }}>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            ctx.onSaveResourceToCatalog?.(posId, resIdx);
-          }}
-          className="shrink-0 h-4 w-4 flex items-center justify-center rounded
-                     text-content-tertiary hover:text-oe-blue hover:bg-oe-blue-subtle
-                     opacity-0 group-hover/res:opacity-100 transition-all"
-          title={ctx.t('boq.save_to_catalog', { defaultValue: 'Save to My Catalog' })}
-        >
-          <BookmarkPlus size={10} />
-        </button>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            ctx.onRemoveResource?.(posId, resIdx);
-          }}
-          className="shrink-0 h-4 w-4 flex items-center justify-center rounded
-                     text-content-tertiary hover:text-semantic-error hover:bg-semantic-error-bg
-                     opacity-0 group-hover/res:opacity-100 transition-all"
-        >
-          <X size={10} />
-        </button>
-      </span>
+      {/* Column-driven slot rendering — one slot per displayed AG Grid
+          column (excluding the three pre-ordinal columns whose width is
+          absorbed into ``leftPad``). Known column IDs map to the rich
+          slot factories above; anything else (custom regional-preset
+          columns, future grid additions) renders a width-matched
+          placeholder so column geometry stays in sync with position
+          rows. Custom columns also surface their per-resource
+          ``custom_fields`` value as read-only italic text. */}
+      {slots.map((slot) => {
+        if (LEFT_PAD_COL_IDS.has(slot.colId)) return null;
+        switch (slot.colId) {
+          case 'ordinal':
+            return renderOrdinalSlot(slot.width);
+          case '_bim_link':
+            return renderBimLinkSlot(slot.width);
+          case 'description':
+            return renderDescriptionSlot(slot.width);
+          case 'unit':
+            return renderUnitSlot(slot.width);
+          case 'quantity':
+            return renderQuantitySlot(slot.width);
+          case 'unit_rate':
+            return renderUnitRateSlot(slot.width);
+          case 'total':
+            return renderTotalSlot(slot.width);
+          case '_actions':
+            return renderActionsSlot(slot.width);
+          default:
+            if (slot.colId.startsWith('custom_')) {
+              return renderCustomColumnSlot(slot);
+            }
+            // Unknown / hidden-but-displayed column → empty placeholder
+            // of correct width so downstream slots stay aligned.
+            return (
+              <span
+                key={slot.colId}
+                className="shrink-0 self-center"
+                style={{ width: `${slot.width}px` }}
+                aria-hidden="true"
+              />
+            );
+        }
+      })}
     </div>
   );
 }
@@ -3689,11 +3837,13 @@ export function EditableResourceRow({ data, ctx, colWidths }: { data: Record<str
 function VariantHeaderResourceRow({
   data,
   ctx,
-  colWidths,
+  slots,
+  leftPad,
 }: {
   data: Record<string, unknown>;
   ctx: FullGridContext;
-  colWidths: ColWidths;
+  slots: ColumnSlot[];
+  leftPad: number;
 }) {
   const positionId = data._parentPositionId as string;
   const headerName = (data._variantHeaderName as string) || '';
@@ -3765,6 +3915,190 @@ function VariantHeaderResourceRow({
   // promote the row before entering a quantity.
   const showNumbers = qty > 0;
 
+  /* ── Per-slot renderers — same column-driven approach as
+   *  ``EditableResourceRow``. The variant header inherits the position's
+   *  geometry exactly, so custom regional-preset columns get empty
+   *  width-matched placeholders (no per-resource value to surface — a
+   *  variant header is an abstract synthetic row, not a stored
+   *  resource). */
+  const renderOrdinalSlot = (width: number) => (
+    <span
+      key="ordinal"
+      className="shrink-0 inline-flex items-center justify-end self-center pr-2 text-[8px] font-mono whitespace-nowrap overflow-hidden"
+      style={{ width: `${width}px` }}
+      title={ctx.t('boq.variant_header_code_tooltip', {
+        defaultValue: 'Abstract variant resource — inherits the position quantity',
+      })}
+    >
+      <span className="px-1 py-0.5 rounded bg-violet-200/60 dark:bg-violet-800/40 text-violet-800 dark:text-violet-200 font-bold tracking-wider">
+        VAR
+      </span>
+    </span>
+  );
+
+  const renderBimLinkSlot = (width: number) => (
+    <span
+      key="_bim_link"
+      className="shrink-0 inline-flex items-center justify-end self-center pl-2 pr-3"
+      style={{ width: `${width}px` }}
+    >
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          openPicker();
+        }}
+        onMouseDown={(e) => e.stopPropagation()}
+        className="inline-flex items-center px-1.5 py-0.5 rounded
+                   bg-gradient-to-br from-violet-500 to-fuchsia-600 text-white
+                   text-[9px] font-bold uppercase tracking-wider
+                   ring-1 ring-white/30 shadow-[0_1px_3px_rgba(139,92,246,0.4)]
+                   hover:from-violet-400 hover:to-fuchsia-500
+                   hover:shadow-[0_2px_6px_rgba(217,70,239,0.5)]
+                   hover:scale-105 active:scale-95
+                   transition-all duration-150 cursor-pointer"
+        title={ctx.t('boq.variant_header_type_tooltip', {
+          defaultValue: 'Click to pick a price variant from the catalog',
+        })}
+        data-testid={`variant-header-chip-${positionId}`}
+      >
+        {ctx.t('boq.variant_header_type_label', { defaultValue: 'Variant' })}
+      </button>
+    </span>
+  );
+
+  const renderDescriptionSlot = (width: number) => (
+    <span
+      key="description"
+      className="shrink-0 truncate min-w-0 self-center text-left text-content-primary font-medium pl-1 pr-1 inline-flex items-center gap-1"
+      style={{ width: `${width}px` }}
+      data-variant-header-interactive="1"
+    >
+      <InlineTextInput
+        value={editedName}
+        onCommit={(v) => setEditedName(v)}
+        className="flex-1 min-w-0 text-xs text-left"
+      />
+    </span>
+  );
+
+  const renderUnitSlot = (width: number) => (
+    <span
+      key="unit"
+      className="shrink-0 text-center text-content-secondary font-mono uppercase self-center px-2 text-[11px]"
+      style={{ width: `${width}px` }}
+    >
+      {unitLabel || '—'}
+    </span>
+  );
+
+  const renderQuantitySlot = (width: number) => (
+    <span
+      key="quantity"
+      className="shrink-0 text-right tabular-nums text-content-secondary self-center pr-1 pl-1"
+      style={{ width: `${width}px` }}
+      data-variant-header-interactive="1"
+      title={ctx.t('boq.variant_header_qty_edit_tooltip', {
+        defaultValue: 'Double-click to edit quantity (synced with the position).',
+      })}
+    >
+      {showNumbers ? (
+        <InlineNumberInput
+          value={qty}
+          onCommit={handleQtyCommit}
+          fmt={ctx.fmt}
+          className="w-full text-xs"
+        />
+      ) : (
+        ''
+      )}
+    </span>
+  );
+
+  const renderUnitRateSlot = (width: number) => (
+    <span
+      key="unit_rate"
+      className="shrink-0 inline-flex items-center justify-end self-center gap-1 pr-2 pl-2"
+      style={{ width: `${width}px` }}
+      data-variant-header-interactive="1"
+    >
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          openPicker();
+        }}
+        onMouseDown={(e) => e.stopPropagation()}
+        className="shrink-0 inline-flex items-center gap-0.5 h-4 px-1 rounded text-[9px] font-semibold
+                   bg-gradient-to-br from-violet-500 to-fuchsia-600 text-white
+                   ring-1 ring-white/30 shadow-[0_1px_3px_rgba(139,92,246,0.4)]
+                   hover:from-violet-400 hover:to-fuchsia-500 hover:shadow-[0_2px_6px_rgba(217,70,239,0.5)]
+                   hover:scale-105 active:scale-95
+                   transition-all duration-150 cursor-pointer"
+        title={ctx.t('boq.variant_header_pill_tooltip', {
+          defaultValue: 'Choose / switch a price variant for this abstract resource',
+        })}
+        data-testid={`variant-header-pill-${positionId}`}
+      >
+        {'▾ '} {optCount}
+      </button>
+      {showNumbers && (
+        <>
+          <span className="flex-1 min-w-0 text-right tabular-nums text-content-primary text-xs font-semibold">
+            <InlineNumberInput
+              value={rate}
+              onCommit={handleRateCommit}
+              fmt={ctx.fmt}
+              className="w-full text-xs"
+            />
+          </span>
+          <span className="shrink-0 inline-flex items-center justify-center w-7 text-[10px] font-mono text-content-secondary">
+            {currency}
+          </span>
+        </>
+      )}
+    </span>
+  );
+
+  const renderTotalSlot = (width: number) => (
+    <span
+      key="total"
+      className="shrink-0 text-right tabular-nums font-semibold text-content-primary self-center pr-2 pl-2"
+      style={{ width: `${width}px` }}
+    >
+      {showNumbers ? fmtNum(total) : ''}
+    </span>
+  );
+
+  const renderActionsSlot = (width: number) => (
+    <span
+      key="_actions"
+      className="shrink-0 flex items-center justify-center gap-0.5 self-center"
+      style={{ width: `${width}px` }}
+    >
+      {isCustomName && ctx.onSaveVariantHeaderToCatalog && (
+        <button
+          type="button"
+          data-variant-header-interactive="1"
+          onClick={(e) => {
+            e.stopPropagation();
+            ctx.onSaveVariantHeaderToCatalog?.(positionId, editedName);
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          className="shrink-0 h-4 w-4 flex items-center justify-center rounded
+                     text-content-tertiary hover:text-oe-blue hover:bg-oe-blue-subtle
+                     transition-all"
+          title={ctx.t('boq.rs_save_variant_to_catalog', {
+            defaultValue: 'Save as a regular article in your catalog',
+          })}
+        >
+          <BookmarkPlus size={10} />
+        </button>
+      )}
+    </span>
+  );
+
   return (
     <div
       // Same uniform sub-row background as EditableResourceRow so variant
@@ -3776,7 +4110,7 @@ function VariantHeaderResourceRow({
                  border-b border-border-light/50
                  shadow-[inset_0_2px_3px_-1px_rgba(0,0,0,0.05)] dark:shadow-[inset_0_2px_3px_-1px_rgba(0,0,0,0.30)]
                  transition-colors"
-      style={{ paddingLeft: `${colWidths.leftPad}px`, paddingRight: '4px' }}
+      style={{ paddingLeft: `${leftPad}px`, paddingRight: '4px' }}
       data-testid={`variant-header-row-${positionId}`}
     >
       {/* Provenance bar — same width as the resource provenance bar so the
@@ -3787,202 +4121,44 @@ function VariantHeaderResourceRow({
         className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-violet-500 to-fuchsia-600"
       />
 
-      {/* Code slot — width = ordinal column (right-aligned, mirrors
-          EditableResourceRow). Shows a small "VAR" chip instead of a
-          catalogue code; tooltip explains the slot. */}
-      <span
-        className="shrink-0 inline-flex items-center justify-end self-center pr-2 text-[8px] font-mono whitespace-nowrap overflow-hidden"
-        style={{ width: `${colWidths.ordinal}px` }}
-        title={ctx.t('boq.variant_header_code_tooltip', {
-          defaultValue: 'Abstract variant resource — inherits the position quantity',
-        })}
-      >
-        <span className="px-1 py-0.5 rounded bg-violet-200/60 dark:bg-violet-800/40 text-violet-800 dark:text-violet-200 font-bold tracking-wider">
-          VAR
-        </span>
-      </span>
-
-      {/* Type slot — width = _bim_link column. Mirrors the resource type
-          chip ("МАТЕРИАЛЫ" / "ОБОРУДОВАНИЕ" / ...) by rendering a
-          dedicated "VARIANT" chip in the same place, so the variant
-          resource visually slots into the same column the user already
-          scans for resource categorisation. Mirrors EditableResourceRow
-          padding (``pl-2 pr-3``) so the name slot can start at the
-          SAME X as the position description (visual spine). */}
-      <span
-        className="shrink-0 inline-flex items-center justify-end self-center pl-2 pr-3"
-        style={{ width: `${colWidths.bimLink}px` }}
-      >
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            openPicker();
-          }}
-          onMouseDown={(e) => e.stopPropagation()}
-          className="inline-flex items-center px-1.5 py-0.5 rounded
-                     bg-gradient-to-br from-violet-500 to-fuchsia-600 text-white
-                     text-[9px] font-bold uppercase tracking-wider
-                     ring-1 ring-white/30 shadow-[0_1px_3px_rgba(139,92,246,0.4)]
-                     hover:from-violet-400 hover:to-fuchsia-500
-                     hover:shadow-[0_2px_6px_rgba(217,70,239,0.5)]
-                     hover:scale-105 active:scale-95
-                     transition-all duration-150 cursor-pointer"
-          title={ctx.t('boq.variant_header_type_tooltip', {
-            defaultValue: 'Click to pick a price variant from the catalog',
-          })}
-          data-testid={`variant-header-chip-${positionId}`}
-        >
-          {ctx.t('boq.variant_header_type_label', { defaultValue: 'Variant' })}
-        </button>
-      </span>
-
-      {/* Name slot — flex-1, mirrors the position description column.
-          The V badge lives on the parent position's description (not
-          repeated here); the VARIANT type chip + the violet provenance
-          bar already mark this row as the variant resource. The name is
-          editable: editing + committing turns this into a custom article
-          name that can be saved to the catalog via the BookmarkPlus
-          button in the Actions column (mirrors regular resources). */}
-      <span
-        className="truncate min-w-0 flex-1 self-center text-left text-content-primary font-medium pl-1 pr-1 inline-flex items-center gap-1"
-        data-variant-header-interactive="1"
-      >
-        <InlineTextInput
-          value={editedName}
-          onCommit={(v) => setEditedName(v)}
-          className="flex-1 min-w-0 text-xs text-left"
-        />
-      </span>
-
-      {/* Classification spacer — same hidden-by-default col as the
-          resource row so toggling on classification doesn't break align. */}
-      {colWidths.classification > 0 && (
-        <span className="shrink-0 self-center" style={{ width: `${colWidths.classification}px` }} aria-hidden="true" />
-      )}
-
-      {/* Unit slot. */}
-      <span
-        className="shrink-0 text-center text-content-secondary font-mono uppercase self-center px-2 text-[11px]"
-        style={{ width: `${colWidths.unit}px` }}
-      >
-        {unitLabel || '—'}
-      </span>
-
-      {/* _bim_qty spacer — same 28px column as the resource row. */}
-      {colWidths.bimQty > 0 && (
-        <span className="shrink-0 self-center" style={{ width: `${colWidths.bimQty}px` }} aria-hidden="true" />
-      )}
-
-      {/* Quantity slot — editable. Inherits from the parent position;
-          commits go through ``onUpdateVariantHeader`` which patches
-          ``position.quantity`` upstream. Empty when qty <= 0 (per user
-          spec: hide numbers when the position has no quantity yet). */}
-      <span
-        className="shrink-0 text-right tabular-nums text-content-secondary self-center pr-1 pl-1"
-        style={{ width: `${colWidths.quantity}px` }}
-        data-variant-header-interactive="1"
-        title={ctx.t('boq.variant_header_qty_edit_tooltip', {
-          defaultValue: 'Double-click to edit quantity (synced with the position).',
-        })}
-      >
-        {showNumbers ? (
-          <InlineNumberInput
-            value={qty}
-            onCommit={handleQtyCommit}
-            fmt={ctx.fmt}
-            className="w-full text-xs"
-          />
-        ) : (
-          ''
-        )}
-      </span>
-
-      {/* Unit rate slot — picker pill (▾ N) opens the variant picker;
-          rate is editable inline. Editing the rate manually keeps the
-          variant marker but overrides the price — the user's spec for
-          "стоановится обычным артикулом" is honoured by the editable
-          name + Save-to-catalog action above. */}
-      <span
-        className="shrink-0 inline-flex items-center justify-end self-center gap-1 pr-2 pl-2"
-        style={{ width: `${colWidths.unitRate}px` }}
-        data-variant-header-interactive="1"
-      >
-        <button
-          ref={triggerRef}
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            openPicker();
-          }}
-          onMouseDown={(e) => e.stopPropagation()}
-          className="shrink-0 inline-flex items-center gap-0.5 h-4 px-1 rounded text-[9px] font-semibold
-                     bg-gradient-to-br from-violet-500 to-fuchsia-600 text-white
-                     ring-1 ring-white/30 shadow-[0_1px_3px_rgba(139,92,246,0.4)]
-                     hover:from-violet-400 hover:to-fuchsia-500 hover:shadow-[0_2px_6px_rgba(217,70,239,0.5)]
-                     hover:scale-105 active:scale-95
-                     transition-all duration-150 cursor-pointer"
-          title={ctx.t('boq.variant_header_pill_tooltip', {
-            defaultValue: 'Choose / switch a price variant for this abstract resource',
-          })}
-          data-testid={`variant-header-pill-${positionId}`}
-        >
-          ▾ {optCount}
-        </button>
-        {showNumbers && (
-          <>
-            <span className="flex-1 min-w-0 text-right tabular-nums text-content-primary text-xs font-semibold">
-              <InlineNumberInput
-                value={rate}
-                onCommit={handleRateCommit}
-                fmt={ctx.fmt}
-                className="w-full text-xs"
+      {/* Column-driven slot rendering — mirrors EditableResourceRow so
+          the variant header lines up with the position row regardless of
+          which custom regional-preset columns the user has added. */}
+      {slots.map((slot) => {
+        if (LEFT_PAD_COL_IDS.has(slot.colId)) return null;
+        switch (slot.colId) {
+          case 'ordinal':
+            return renderOrdinalSlot(slot.width);
+          case '_bim_link':
+            return renderBimLinkSlot(slot.width);
+          case 'description':
+            return renderDescriptionSlot(slot.width);
+          case 'unit':
+            return renderUnitSlot(slot.width);
+          case 'quantity':
+            return renderQuantitySlot(slot.width);
+          case 'unit_rate':
+            return renderUnitRateSlot(slot.width);
+          case 'total':
+            return renderTotalSlot(slot.width);
+          case '_actions':
+            return renderActionsSlot(slot.width);
+          default:
+            // Variant headers don't carry per-resource metadata (they're
+            // a synthetic projection of the parent position), so custom
+            // columns render an empty placeholder of the right width.
+            // Visual continuity with position rows is preserved without
+            // duplicating the parent-position custom-field value here.
+            return (
+              <span
+                key={slot.colId}
+                className="shrink-0 self-center"
+                style={{ width: `${slot.width}px` }}
+                aria-hidden="true"
               />
-            </span>
-            <span className="shrink-0 inline-flex items-center justify-center w-7 text-[10px] font-mono text-content-secondary">
-              {currency}
-            </span>
-          </>
-        )}
-      </span>
-
-      {/* Total slot — also empty when qty is 0 / missing. */}
-      <span
-        className="shrink-0 text-right tabular-nums font-semibold text-content-primary self-center pr-2 pl-2"
-        style={{ width: `${colWidths.total}px` }}
-      >
-        {showNumbers ? fmtNum(total) : ''}
-      </span>
-
-      {/* Actions slot — Save-to-catalog button mirrors the regular
-          resource row's BookmarkPlus, surfaces only after the user has
-          renamed the variant resource (so the user is opting in to
-          catalog-promote a customised name). Width matches the position
-          row's actions column for vertical alignment. */}
-      <span
-        className="shrink-0 flex items-center justify-center gap-0.5 self-center"
-        style={{ width: `${colWidths.actions}px` }}
-      >
-        {isCustomName && ctx.onSaveVariantHeaderToCatalog && (
-          <button
-            type="button"
-            data-variant-header-interactive="1"
-            onClick={(e) => {
-              e.stopPropagation();
-              ctx.onSaveVariantHeaderToCatalog?.(positionId, editedName);
-            }}
-            onMouseDown={(e) => e.stopPropagation()}
-            className="shrink-0 h-4 w-4 flex items-center justify-center rounded
-                       text-content-tertiary hover:text-oe-blue hover:bg-oe-blue-subtle
-                       transition-all"
-            title={ctx.t('boq.rs_save_variant_to_catalog', {
-              defaultValue: 'Save as a regular article in your catalog',
-            })}
-          >
-            <BookmarkPlus size={10} />
-          </button>
-        )}
-      </span>
+            );
+        }
+      })}
     </div>
   );
 }
@@ -3993,40 +4169,16 @@ export function ResourceFullWidthRenderer(params: ICellRendererParams) {
   const { data, context, api } = params;
   const ctx = context as FullGridContext | undefined;
 
-  // Read actual column widths from the grid for perfect alignment.
-  //
-  // leftPad lands the resource's catalogue-code chip at the SAME X as
-  // the position's ordinal cell (e.g. "01.02.003") — the visual spine
-  // the user asked for: position ordinals and resource codes line up
-  // vertically. Includes _drag + _checkbox + _expand (the three
-  // before the ordinal column).
-  const colWidths = useMemo(() => {
-    const getW = (id: string) => api?.getColumn(id)?.getActualWidth() ?? 0;
-    // Extra 56px nudge — pushes code chip / type tag / resource name
-    // visibly to the right of the position ordinal column so the resource
-    // panel reads as visually subordinate to its parent position. The
-    // numeric columns (unit / qty / rate / total / actions) keep the same
-    // X coordinates as the position row because the flex-1 name slot
-    // absorbs the shift.
-    const leftPad = getW('_drag') + getW('_checkbox') + getW('_expand') + 56;
-    return {
-      leftPad,
-      ordinal: getW('ordinal'),
-      bimLink: getW('_bim_link'),
-      // classification is hide:true by default; if a user toggles it on,
-      // we still match the position layout so values stay aligned.
-      classification: getW('classification'),
-      unit: getW('unit'),
-      // _bim_qty is a 28px visible column between unit and quantity; the
-      // resource row needs a matching spacer or every numeric value
-      // (qty/rate/total/actions) sits 28px LEFT of its position counterpart.
-      bimQty: getW('_bim_qty'),
-      quantity: getW('quantity'),
-      unitRate: getW('unit_rate'),
-      total: getW('total'),
-      actions: getW('_actions'),
-    };
-  }, [api]);
+  // Read the live AG Grid column list (id + actual width) and recompute
+  // ``leftPad`` from it. The hook subscribes to columnResized /
+  // columnVisible / columnMoved / displayedColumnsChanged so the resource
+  // row stays aligned with the position rows under any column gesture.
+  // ``leftPad`` is the visible left-indent in front of the resource's
+  // catalogue-code chip; it absorbs the width of the three pre-ordinal
+  // columns (_drag + _checkbox + _expand) plus a 56px nudge that pushes
+  // the resource panel visually subordinate to its parent position.
+  const slots = useDisplayedColumnSlots(api ?? null);
+  const leftPad = computeLeftPad(slots);
 
   if (!ctx) return null;
 
@@ -4037,28 +4189,56 @@ export function ResourceFullWidthRenderer(params: ICellRendererParams) {
 
   // Resource sub-row
   if (data?._isResource) {
-    return <EditableResourceRow data={data} ctx={ctx} colWidths={colWidths} />;
+    return <EditableResourceRow data={data} ctx={ctx} slots={slots} leftPad={leftPad} />;
   }
 
   // Synthetic "abstract variant" header — surfaces the position-level
   // CWICR variant catalog as a visible row inside the resource panel.
   // V badge prominent + click anywhere reopens the position-level picker.
   if (data?._isVariantHeader) {
-    return <VariantHeaderResourceRow data={data} ctx={ctx} colWidths={colWidths} />;
+    return <VariantHeaderResourceRow data={data} ctx={ctx} slots={slots} leftPad={leftPad} />;
   }
 
-  // "Add resource" row
+  // "Add resource" row — column-driven layout so the action buttons sit
+  // in the description slot, the position resource-total surfaces in the
+  // total slot, and any custom regional-preset columns get empty
+  // width-matched placeholders that preserve grid alignment.
   if (data?._isAddResource) {
-    return (
-      <div
-        className="flex items-center w-full h-full pr-3 gap-2 select-none
-                    bg-surface-secondary/20 border-b border-border-light/30"
-        style={{ paddingLeft: `${colWidths.leftPad}px` }}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          ctx.onShowContextMenu?.(e, 'addResource', data);
-        }}
+    const renderTotalSlot = (width: number) => {
+      if (typeof data._positionResourceTotal !== 'number' || data._positionResourceTotal <= 0) {
+        return (
+          <span
+            key="total"
+            className="shrink-0 self-center"
+            style={{ width: `${width}px` }}
+            aria-hidden="true"
+          />
+        );
+      }
+      // Issue #88 — keep this footer in lock-step with the rest of the
+      // BOQ when display currency is active. The base value is stored in
+      // ``_positionResourceTotal``; only the rendering changes.
+      const baseValue = data._positionResourceTotal as number;
+      const dc = ctx.displayCurrency;
+      const shown = dc && dc.rate > 0 ? baseValue / dc.rate : baseValue;
+      const code = dc && dc.rate > 0 ? dc.code : (ctx.currencyCode ?? 'EUR');
+      return (
+        <span
+          key="total"
+          className="shrink-0 self-center text-right tabular-nums text-[10px] font-medium text-content-tertiary pr-2 pl-2"
+          style={{ width: `${width}px` }}
+          title={ctx.t('boq.resources_total', { defaultValue: 'Resources total' })}
+        >
+          {fmtWithCurrency(shown, ctx.locale ?? 'de-DE', code)}
+        </span>
+      );
+    };
+
+    const renderDescriptionSlot = (width: number) => (
+      <span
+        key="description"
+        className="shrink-0 self-center inline-flex items-center gap-2 pl-1"
+        style={{ width: `${width}px` }}
       >
         <button
           onClick={(e) => {
@@ -4093,21 +4273,37 @@ export function ResourceFullWidthRenderer(params: ICellRendererParams) {
           <Boxes size={10} />
           {ctx.t('boq.add_from_catalog_short', { defaultValue: 'From Catalog' })}
         </button>
-        <div className="flex-1" />
-        {typeof data._positionResourceTotal === 'number' && data._positionResourceTotal > 0 && (() => {
-          // Issue #88 — keep this footer in lock-step with the rest of the
-          // BOQ when display currency is active. The base value is stored in
-          // `_positionResourceTotal`; only the rendering changes.
-          const baseValue = data._positionResourceTotal as number;
-          const dc = ctx.displayCurrency;
-          const shown = dc && dc.rate > 0 ? baseValue / dc.rate : baseValue;
-          const code = dc && dc.rate > 0 ? dc.code : (ctx.currencyCode ?? 'EUR');
+      </span>
+    );
+
+    return (
+      <div
+        className="flex items-center w-full h-full select-none
+                    bg-surface-secondary/20 border-b border-border-light/30"
+        style={{ paddingLeft: `${leftPad}px`, paddingRight: '4px' }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          ctx.onShowContextMenu?.(e, 'addResource', data);
+        }}
+      >
+        {slots.map((slot) => {
+          if (LEFT_PAD_COL_IDS.has(slot.colId)) return null;
+          if (slot.colId === 'description') return renderDescriptionSlot(slot.width);
+          if (slot.colId === 'total') return renderTotalSlot(slot.width);
+          // All other columns (ordinal, _bim_link, unit, _bim_qty,
+          // quantity, unit_rate, classification, _actions, custom_*)
+          // render an empty placeholder so the description and total
+          // slots line up with the position-row columns above.
           return (
-            <span className="text-[10px] font-medium text-content-tertiary tabular-nums pr-5">
-              {ctx.t('boq.resources_total', { defaultValue: 'Resources total' })}: {fmtWithCurrency(shown, ctx.locale ?? 'de-DE', code)}
-            </span>
+            <span
+              key={slot.colId}
+              className="shrink-0 self-center"
+              style={{ width: `${slot.width}px` }}
+              aria-hidden="true"
+            />
           );
-        })()}
+        })}
       </div>
     );
   }
