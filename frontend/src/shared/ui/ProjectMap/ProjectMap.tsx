@@ -126,21 +126,11 @@ async function geocode(query: string, signal?: AbortSignal): Promise<LatLng | nu
   }
 }
 
-/**
- * Build the query string we feed to Nominatim from a project's fields.
- * Returns null if there's nothing worth geocoding.
- */
-export function buildGeocodeQuery(
-  address?: string | null,
-  city?: string | null,
-  country?: string | null,
-): string | null {
-  const parts = [address, city, country].filter(
-    (p): p is string => !!p && p.trim().length > 0,
-  );
-  if (parts.length === 0) return null;
-  return parts.join(', ');
-}
+// ``buildGeocodeQuery`` lives in ``./geocode`` so consumers that only
+// need to build an address string don't pull in the full maplibre +
+// react-map-gl chunk (and its 220 KB CSS) via this module.
+export { buildGeocodeQuery } from './geocode';
+import { buildGeocodeQuery } from './geocode';
 
 export function ProjectMap({
   lat,
@@ -200,7 +190,11 @@ export function ProjectMap({
   }, [hasExplicitCoords, lat, lng, query]);
 
   const isCard = variant === 'card';
-  const heightClass = isCard ? 'h-28' : 'h-80';
+  // detail variant defaults to ``h-full`` so the parent grid (e.g. the
+  // project-detail Map+Weather panel) can stretch the map to match the
+  // height of its sibling. A custom ``className`` override still wins
+  // because tailwind's JIT utilities cascade after the default class.
+  const heightClass = isCard ? 'h-28' : 'h-full';
 
   const shell = (content: React.ReactNode) => (
     <div

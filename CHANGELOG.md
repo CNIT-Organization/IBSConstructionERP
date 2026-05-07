@@ -5,6 +5,33 @@ All notable changes to OpenConstructionERP are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.21] — 2026-05-07
+
+### Changed (perf — backend & static serving)
+
+- **Default response class is now `ORJSONResponse`.** `app/main.py` passes `default_response_class=ORJSONResponse` to `FastAPI(...)` so every endpoint serialises via orjson instead of stdlib `json`. Typically 5–10× faster on dict/list payloads and ~2× faster at producing UTF-8 bytes — measurable wins on dashboard / list / vector-search endpoints. orjson was already a base dep (used by the non-finite-float middleware).
+- **Immutable `Cache-Control` on hashed `/assets/*`.** `app/cli_static.py` mounts `/assets` via a custom `_ImmutableStaticFiles` subclass that adds `Cache-Control: public, max-age=31536000, immutable` to every 200 response. Vite emits content-hash filenames so the URL changes whenever the file changes — repeat visits now skip the network entirely for JS/CSS chunks.
+- **`Cache-Control: no-cache` on the SPA `index.html` fallback.** Same file. The entry HTML must revalidate every reload — a stale cached entry would point at hashed URLs that may have been deleted by a redeploy. Now: hashed assets cached forever, entry always fresh.
+
+### Changed (perf — frontend)
+
+- **`buildGeocodeQuery` extracted to its own file.** `frontend/src/shared/ui/ProjectMap/geocode.ts`. Previously consumers like `DashboardProjectsMap.tsx` imported the helper directly from `ProjectMap.tsx`, which side-effect-imported `maplibre-gl/dist/maplibre-gl.css` (~220 KB raw / ~25 KB gzip) into the boot CSS bundle. The helper is a pure string-builder with zero deps, so the new module isolates it cleanly.
+
+### Changed (UX — project detail)
+
+- **Weather forecast now renders in 3 rows on tablet/desktop.** `frontend/src/shared/ui/ProjectWeather/ProjectWeather.tsx` switched from `sm:grid-cols-8` (8 cols × 2 rows) to `sm:grid-cols-6` (6 cols × 3 rows: 6 + 6 + 4). Mobile (default `grid-cols-4`) unchanged.
+- **Map height matches the weather block.** `ProjectDetailPage.tsx` parent grid gained `items-stretch`, the map's fixed `h-[32rem]` was replaced with `h-full min-h-[20rem]` (only when weather is also visible), and `ProjectMap.tsx`'s detail-variant `heightClass` switched from `h-80` to `h-full` so the map fills its grid cell. When weather is hidden, the map falls back to the original fixed 32 rem.
+
+### Fixed (BOQ — custom columns on resource rows)
+
+- **Custom text/number columns now inherit the parent position's value on resource sub-rows.** `columnDefs.ts:getCustomColumnDefs` builds an `O(1)` `positionsById` map of all positions; the column's `valueGetter` walks `_parentPositionId` for resource rows and reads `parent.metadata.custom_fields[name]`. Resource cells render the inherited value read-only with italic + muted styling so the user can tell it's not editable in place — to change a custom value, edit the position row.
+- **Derived `resource_sum` / `percentage_of_unit_rate` columns now render per-resource values on resource sub-rows.** Previously the guard at the top of the value-getter returned empty for any non-position row, so derived columns showed blank cells under every position. Now: a resource row whose `_resourceType` matches the column's `resource_role` renders its own `qty × rate` contribution (`resource_sum`) or its share of the parent's total resource sum (`percentage_of_unit_rate`). Mismatched roles still render blank so each contribution is visually attributed to the right resource.
+- **`editable` predicate now blocks resource + add-resource rows.** Previously the AG Grid editor would open on a resource row and the user could type into a non-existent `metadata.custom_fields`, with the value setter silently returning `false`. Resource cells are now correctly read-only.
+
+### Fixed (BIM viewer — issue #113 silent geometry-load failures)
+
+- **3D viewer now surfaces geometry-load failures.** `BIMViewer.tsx:910` previously caught DAE/GLB load errors with a `console.warn` only, leaving the user with an empty canvas and no signal of what went wrong. The catch handler now sets a `geometryError` state which renders a top-anchored amber banner with the failure message + a **Retry** button. The retry calls a new `ElementManager.resetGeometryLoadFlag()` and bumps a `geometryRetryNonce` so the load effect re-runs the fetch without forcing a full page reload. Covers 401 from a stale token, 404 from a redeploy that ate the file, malformed GLB/DAE bytes, and OOM during BVH build.
+
 ## [2.9.20] — 2026-05-07
 
 ### Changed (i18n perf — per-locale lazy chunks)

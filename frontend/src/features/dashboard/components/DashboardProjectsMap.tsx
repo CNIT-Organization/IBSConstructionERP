@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { Map as MapIcon, MapPin } from 'lucide-react';
 import clsx from 'clsx';
 import type { MapRef } from 'react-map-gl/maplibre';
-import { buildGeocodeQuery } from '@/shared/ui/ProjectMap/ProjectMap';
+import { buildGeocodeQuery } from '@/shared/ui/ProjectMap/geocode';
 
 const MAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/positron';
 const CACHE_PREFIX = 'oe.geocode.';

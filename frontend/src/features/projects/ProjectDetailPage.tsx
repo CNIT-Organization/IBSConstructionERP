@@ -421,7 +421,7 @@ function ProjectLocationPanel({ project }: { project: Project }) {
   return (
     <div
       className={clsx(
-        'mb-4 grid gap-3',
+        'mb-4 grid gap-3 items-stretch',
         mapEnabled && weatherEnabled
           ? 'grid-cols-1 lg:grid-cols-[3fr_2fr]'
           : 'grid-cols-1',
@@ -437,7 +437,13 @@ function ProjectLocationPanel({ project }: { project: Project }) {
           country={project.address?.country}
           label={addressLabel}
           onResolved={handleResolved}
-          className="h-[32rem]"
+          className={clsx(
+            // When weather is also visible, let the grid stretch the map
+            // to match the (now 3-row) weather block. When the map is
+            // shown alone, fall back to a fixed height so it doesn't
+            // collapse to zero.
+            weatherEnabled ? 'h-full min-h-[20rem]' : 'h-[32rem]',
+          )}
         />
       )}
       {weatherEnabled && (

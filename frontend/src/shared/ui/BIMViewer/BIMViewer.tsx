@@ -479,6 +479,17 @@ export function BIMViewer({
    *  blob downloads — a 100MB model can take 30+ seconds and the
    *  previous spinner gave the user no signal anything was happening. */
   const [geometryProgress, setGeometryProgress] = useState<number | null>(null);
+  /** User-visible error when the geometry blob fails to load — bad
+   *  GLB/DAE bytes, 401 from a stale token, 404 from a freshly-deleted
+   *  redeploy, etc. Issue #113: previously this case was logged to the
+   *  console only and the user saw an empty canvas with no signal at
+   *  all. Now we surface a banner with the message + a Retry button.
+   *  Cleared whenever a fresh load is kicked off. */
+  const [geometryError, setGeometryError] = useState<string | null>(null);
+  /** Bumped to force the geometry-load effect to re-run when the user
+   *  clicks Retry. Doesn't change ``geometryUrl`` so we can't simply
+   *  re-set state to the same value — a discriminating dep is needed. */
+  const [geometryRetryNonce, setGeometryRetryNonce] = useState(0);
   // Track the "hide-overlay" timeout so the cleanup effect can clear it
   // when the component unmounts mid-load (avoids setState-on-unmounted warns).
   const geometryProgressTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -846,9 +857,9 @@ export function BIMViewer({
     const mgr = elementMgrRef.current;
     // Only load if not already loaded for this URL
     if (!mgr.hasLoadedGeometry()) {
-      // Reset progress state at the start of every load.  null →
-      // hide overlay; 0 → start animating in.
+      // Reset progress + error state at the start of every load.
       setGeometryProgress(0);
+      setGeometryError(null);
       // Per-modelId geometry cache (RFC 19 §UX-1). Hits skip the network
       // round-trip entirely; misses populate the cache for the next mount.
       const cacheStore = useBIMGeometryCache.getState();
@@ -908,9 +919,20 @@ export function BIMViewer({
           });
         })
         .catch((err) => {
-          // Geometry load failed — no fallback boxes, just clear progress.
+          // Surface the error in the UI — issue #113. Previously this
+          // path only logged to console, so the user saw an empty
+          // canvas with no signal at all. The banner exposes the
+          // failure mode (network 401/404, malformed GLB/DAE, etc.) and
+          // offers a retry without forcing a full page reload.
           // eslint-disable-next-line no-console
           console.warn('[BIM] Geometry load failed:', err);
+          const message =
+            err instanceof Error
+              ? err.message || err.name || 'Unknown error'
+              : typeof err === 'string'
+                ? err
+                : 'Unknown error';
+          setGeometryError(message);
           setGeometryProgress(null);
         });
     }
@@ -923,9 +945,12 @@ export function BIMViewer({
       }
     };
   // Re-run when geometryUrl changes OR when elements first arrive (guard above).
+  // ``geometryRetryNonce`` is bumped by the retry button on the error banner
+  // (issue #113) — it forces a re-run with the same URL after the user
+  // resets the load-status flag below.
   // Using elements.length as dep avoids re-triggering on data-only updates.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [geometryUrl, elements?.length]);
+  }, [geometryUrl, elements?.length, geometryRetryNonce]);
 
   // Apply filter predicate whenever it changes. Predicates from BIMFilterPanel
   // are rebuilt on every filter state change, so this effect fires fast but
@@ -1977,6 +2002,56 @@ export function BIMViewer({
           <div className="flex flex-col items-center gap-3 text-center px-8">
             <AlertCircle size={32} className="text-red-500" />
             <span className="text-sm text-content-secondary">{error}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Geometry load failure (issue #113). Distinct from the
+          ``error`` overlay above (element-list fetch failure) — this
+          one fires after elements arrive but the GLB/DAE blob can't
+          be parsed (401 from a stale token, 404 from a redeploy that
+          ate the file, malformed bytes, OOM during BVH build, etc.).
+          Surfaced as a non-blocking banner anchored top-center so the
+          user can still pan/zoom whatever DID load (e.g. placeholder
+          boxes from the text-IFC fallback). The Retry button re-runs
+          the load by bumping ``geometryRetryNonce``. */}
+      {geometryError && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 max-w-md w-[90%]">
+          <div className="rounded-lg border border-amber-300/70 dark:border-amber-700/60 bg-amber-50/95 dark:bg-amber-900/30 backdrop-blur-sm shadow-lg px-4 py-3">
+            <div className="flex items-start gap-3">
+              <AlertCircle size={18} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-semibold text-amber-900 dark:text-amber-100">
+                  {t('bim.geometry_load_failed', {
+                    defaultValue: 'Could not load 3D geometry',
+                  })}
+                </div>
+                <div className="mt-1 text-[12px] text-amber-800 dark:text-amber-200 break-words">
+                  {geometryError}
+                </div>
+                <div className="mt-2 flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const mgr = elementMgrRef.current;
+                      if (mgr) mgr.resetGeometryLoadFlag();
+                      setGeometryError(null);
+                      setGeometryRetryNonce((n) => n + 1);
+                    }}
+                    className="inline-flex items-center gap-1 rounded-md border border-amber-400 dark:border-amber-700 bg-white dark:bg-amber-800/40 hover:bg-amber-100 dark:hover:bg-amber-700/60 px-2.5 py-1 text-xs font-medium text-amber-900 dark:text-amber-100 transition-colors"
+                  >
+                    {t('bim.geometry_retry', { defaultValue: 'Retry' })}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setGeometryError(null)}
+                    className="text-[11px] text-amber-700/80 dark:text-amber-300/80 hover:text-amber-900 dark:hover:text-amber-100"
+                  >
+                    {t('bim.geometry_dismiss', { defaultValue: 'Dismiss' })}
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}

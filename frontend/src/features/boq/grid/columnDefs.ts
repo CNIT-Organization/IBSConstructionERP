@@ -522,6 +522,15 @@ export function getCustomColumnDefs(
   // no positions / variables are wired in. This keeps the call-site
   // backwards compatible for callers that don't yet supply context.
   const ctx: CustomColumnEngineContext = engineCtx ?? { positions: [] };
+  // O(1) parent lookup for resource rows. Resource rows carry
+  // ``_parentPositionId`` but no ``metadata`` of their own — to render
+  // a parent-position custom field on a sub-row we have to grab the
+  // parent's metadata at value-getter time. Built once per column-defs
+  // rebuild, not per cell render.
+  const positionsById = new Map<string, Position>();
+  for (const p of ctx.positions) {
+    if (p.id) positionsById.set(p.id, p);
+  }
   return customColumns
     .slice()
     .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
@@ -555,14 +564,37 @@ export function getCustomColumnDefs(
         // Derived columns are computed from position.metadata.resources —
         // never editable. Marking them readOnly lines them up visually
         // with the existing read-only "Total" column.
+        // Resource rows show INHERITED values from the parent position
+        // (text/number custom fields) or per-resource derived values
+        // (resource_sum / percentage_of_unit_rate). Either way the
+        // resource-row cell is read-only — to change a custom field
+        // value, edit the position row.
         editable: isCalculated || isDerived
           ? false
-          : (params) => !params.data?._isSection && !params.data?._isFooter,
-        cellClass: isNumeric
-          ? isCalculated || isDerived
-            ? 'text-right tabular-nums text-xs text-content-secondary'
-            : 'text-right tabular-nums text-xs'
-          : 'text-xs',
+          : (params) =>
+              !params.data?._isSection &&
+              !params.data?._isFooter &&
+              !params.data?._isResource &&
+              !params.data?._isAddResource,
+        // ``cellClass`` is a function so we can mute the styling on
+        // resource sub-rows — those cells either inherit from the
+        // parent (text/number custom fields) or break a position-level
+        // total down per resource (derived columns). Either way the
+        // value is computed, not user-entered, so we render it with
+        // the same subdued treatment AG Grid already uses for other
+        // read-only derived cells.
+        cellClass: (params) => {
+          const isResourceRow = !!params.data?._isResource;
+          if (isNumeric) {
+            const tone =
+              isCalculated || isDerived || isResourceRow
+                ? 'text-content-secondary'
+                : '';
+            const italic = isResourceRow ? 'italic' : '';
+            return `text-right tabular-nums text-xs ${tone} ${italic}`.trim();
+          }
+          return isResourceRow ? 'text-xs italic text-content-tertiary' : 'text-xs';
+        },
         headerClass: isNumeric ? 'ag-right-aligned-header' : '',
       };
 
@@ -596,13 +628,57 @@ export function getCustomColumnDefs(
         const dec = Math.max(0, Math.min(6, col.decimals ?? 2));
         base.valueGetter = (params) => {
           const data = params.data;
-          if (!data || data._isSection || data._isFooter) return '';
+          if (!data || data._isSection || data._isFooter || data._isAddResource) {
+            return '';
+          }
+
+          // Resource sub-row: render the per-resource value (its own
+          // qty × rate contribution, OR its own % of the parent
+          // position's total resource sum). Only resources whose type
+          // matches the column's role filter render a value — others
+          // stay blank so the column visually attributes the
+          // contribution to the right resource.
+          if (data._isResource) {
+            const t = typeof data._resourceType === 'string' ? data._resourceType : 'other';
+            if (role && t !== role) return '';
+            const q = typeof data._resourceQty === 'number'
+              ? data._resourceQty
+              : parseFloat(String(data._resourceQty ?? '0')) || 0;
+            const r = typeof data._resourceRate === 'number'
+              ? data._resourceRate
+              : parseFloat(String(data._resourceRate ?? '0')) || 0;
+            const contribution = q * r;
+            if (col.derived === 'percentage_of_unit_rate') {
+              const parent = data._parentPositionId
+                ? positionsById.get(String(data._parentPositionId))
+                : undefined;
+              const parentResources =
+                ((parent?.metadata as Record<string, unknown> | undefined)
+                  ?.resources as Array<Record<string, unknown>> | undefined) ?? [];
+              let allSum = 0;
+              for (const res of parentResources) {
+                const rq = typeof res.quantity === 'number'
+                  ? res.quantity
+                  : parseFloat(String(res.quantity ?? '0')) || 0;
+                const rr = typeof res.unit_rate === 'number'
+                  ? res.unit_rate
+                  : parseFloat(String(res.unit_rate ?? '0')) || 0;
+                allSum += rq * rr;
+              }
+              if (allSum <= 0) return '';
+              return ((contribution / allSum) * 100).toFixed(dec);
+            }
+            // resource_sum on a resource row = this resource's
+            // contribution to the position unit rate.
+            return contribution.toFixed(dec);
+          }
+
+          // Position row: existing aggregation across the position's
+          // resources. Sums the per-unit subtotal of resources whose
+          // `type` matches the role hint.
           const meta = (data.metadata as Record<string, unknown> | undefined) ?? {};
           const resources = (meta.resources as Array<Record<string, unknown>> | undefined) ?? [];
           if (!Array.isArray(resources) || resources.length === 0) return '';
-          // Sum the per-unit subtotal of resources whose `type` matches
-          // the role hint. Each resource is stored as PER-UNIT of the
-          // position (qty × rate is contribution to position.unit_rate).
           let matched = 0;
           let allSum = 0;
           for (const res of resources) {
@@ -636,9 +712,24 @@ export function getCustomColumnDefs(
       // `field` / `colId` that the user might rename later). Keeping
       // these two as the SINGLE source of truth eliminates the
       // "values jump to a sibling column" class of bugs entirely.
+      //
+      // Resource sub-rows inherit the parent position's custom-field
+      // value — they have no `metadata` of their own, so we look the
+      // parent up by ``_parentPositionId``. This makes the column
+      // visible across all rows of a position; the cell is read-only on
+      // sub-rows (see editable above) so edits still happen at the
+      // position level.
       base.valueGetter = (params) => {
-        const cf = (params.data?.metadata as Record<string, unknown> | undefined)
-          ?.custom_fields as Record<string, unknown> | undefined;
+        const data = params.data;
+        if (!data) return '';
+        let metaSource: Record<string, unknown> | undefined;
+        if (data._isResource && data._parentPositionId) {
+          const parent = positionsById.get(String(data._parentPositionId));
+          metaSource = parent?.metadata as Record<string, unknown> | undefined;
+        } else {
+          metaSource = data.metadata as Record<string, unknown> | undefined;
+        }
+        const cf = metaSource?.custom_fields as Record<string, unknown> | undefined;
         return cf?.[col.name] ?? '';
       };
       // valueSetter rebuilds `metadata` and `custom_fields` as fresh

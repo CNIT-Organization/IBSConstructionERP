@@ -1129,6 +1129,15 @@ export class ElementManager {
     return this.geometryLoaded;
   }
 
+  /** Reset the load-status flag so the next ``loadGeometry`` call goes
+   *  through. Used by the BIMViewer retry button after a load failure
+   *  (issue #113) — there's no in-scene state to clean up because a
+   *  failed load never reached the success branch that sets
+   *  ``geometryLoaded = true``. */
+  resetGeometryLoadFlag(): void {
+    this.geometryLoaded = false;
+  }
+
   /**
    * Ratio of elements whose DAE mesh was successfully identified by
    * stable_id/name. The parent UI surfaces a hint when this is very low

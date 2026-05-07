@@ -68,12 +68,24 @@ def mount_frontend(app: FastAPI) -> None:
 
     logger.info("Serving frontend from %s", frontend_dir)
 
-    # Serve hashed assets (JS, CSS)
+    # Serve hashed assets (JS, CSS) with year-long immutable caching.
+    # Vite emits content-hash suffixes (e.g. index-9MyhyuSS.js) so the
+    # URL changes whenever the file changes — repeat visits can serve
+    # straight from the browser cache without revalidation.
+    class _ImmutableStaticFiles(StaticFiles):
+        async def get_response(self, path: str, scope):  # noqa: ANN001, ANN202
+            response = await super().get_response(path, scope)
+            if response.status_code == 200:
+                response.headers["Cache-Control"] = (
+                    "public, max-age=31536000, immutable"
+                )
+            return response
+
     assets_dir = frontend_dir / "assets"
     if assets_dir.is_dir():
         app.mount(
             "/assets",
-            StaticFiles(directory=str(assets_dir)),
+            _ImmutableStaticFiles(directory=str(assets_dir)),
             name="frontend-assets",
         )
 
@@ -94,7 +106,10 @@ def mount_frontend(app: FastAPI) -> None:
 
     # Serve other root-level static files (e.g. manifest.json, robots.txt)
     # that may exist in the frontend dist directory.
-    _root_static_extensions = {".ico", ".png", ".svg", ".webmanifest", ".json", ".txt", ".xml"}
+    _root_static_extensions = {
+        ".ico", ".png", ".svg", ".webmanifest", ".json", ".txt", ".xml",
+        ".webp", ".avif", ".jpg", ".jpeg", ".gif", ".woff", ".woff2",
+    }
 
     # ── SPA fallback via custom 404 handler ─────────────────────────────
     # Keep a reference to whatever 404 handler was already registered
@@ -124,5 +139,11 @@ def mount_frontend(app: FastAPI) -> None:
             if candidate.is_file() and candidate.suffix in _root_static_extensions:
                 return FileResponse(str(candidate))
 
-        # Everything else: SPA client-side routing → index.html
-        return FileResponse(str(index_path))
+        # Everything else: SPA client-side routing → index.html. Force
+        # the browser to revalidate the entry on every reload — a stale
+        # cached index.html points at hashed asset URLs that may have
+        # been deleted by a redeploy.
+        return FileResponse(
+            str(index_path),
+            headers={"Cache-Control": "no-cache"},
+        )

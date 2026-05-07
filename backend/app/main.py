@@ -57,6 +57,7 @@ from pathlib import Path
 import structlog
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import ORJSONResponse
 
 from app.config import Settings, get_settings
 from app.core.module_loader import module_loader
@@ -663,6 +664,13 @@ def create_app() -> FastAPI:
         openapi_url="/api/openapi.json" if not settings.is_production else None,
         swagger_ui_oauth2_redirect_url=("/api/docs/oauth2-redirect" if not settings.is_production else None),
         redirect_slashes=False,
+        # ORJSONResponse skips stdlib ``json`` for serialisation — it's
+        # 5-10× faster on dict/list payloads and 2× faster at producing
+        # UTF-8 bytes. orjson is already a base dep (used by the
+        # non-finite-float middleware below), so this only flips the
+        # default response class. Existing callers that explicitly
+        # ``return JSONResponse(...)`` keep working unchanged.
+        default_response_class=ORJSONResponse,
     )
 
     # ── Middleware ───────────────────────────────────────────────────────
@@ -1157,6 +1165,123 @@ def create_app() -> FastAPI:
         # Cache result
         setattr(app.state, cache_key, {"data": result, "checked_at": time.time()})
         return result
+
+    @app.get("/api/system/converters/version-check", tags=["System"])
+    async def check_converter_versions() -> dict[str, Any]:
+        """Compare each installed DDC converter against the latest on GitHub.
+
+        Computes the git-blob SHA-1 of every locally-installed converter and
+        compares it to the SHA returned by GitHub's Contents API for the
+        same file in `cad2data-Revit-IFC-DWG-DGN`. A mismatch means the
+        user has an older build and a newer one is available.
+
+        Cached on `app.state` for 6 h so the dashboard banner can poll
+        cheaply without burning the unauthenticated GitHub rate limit
+        (60 req/h). Network failures degrade gracefully — `network_ok=false`
+        and `any_outdated=false` so the UI suppresses the banner.
+        """
+        import asyncio
+        import hashlib
+
+        import httpx
+
+        from app.modules.boq.cad_import import find_converter
+
+        # Per-format directory inside the repo. Mirrors `_WINDOWS_CONVERTER_DIRS`
+        # in takeoff/router.py — duplicated here so the system endpoint
+        # works even when the takeoff module is not loaded (it ships
+        # disabled by default in some configurations).
+        DDC_REPO = "datadrivenconstruction/cad2data-Revit-IFC-DWG-DGN"
+        DDC_BRANCH = "main"
+        WIN_DIRS: dict[str, tuple[str, str, str]] = {
+            # ext: (github_dir, exe_name, display_name)
+            "rvt": ("DDC_WINDOWS_Converters/DDC_CONVERTER_REVIT", "RvtExporter.exe", "Revit (RVT) Parser"),
+            "ifc": ("DDC_WINDOWS_Converters/DDC_CONVERTER_IFC", "IfcExporter.exe", "IFC Import"),
+            "dwg": ("DDC_WINDOWS_Converters/DDC_CONVERTER_DWG", "DwgExporter.exe", "DWG/DXF Converter"),
+            "dgn": ("DDC_WINDOWS_Converters/DDC_CONVERTER_DGN", "DgnExporter.exe", "DGN Converter"),
+        }
+        TTL = 6 * 3600
+
+        cached = getattr(app.state, "_converter_version_cache", None)
+        if cached and (time.time() - cached.get("checked_at_ts", 0)) < TTL:
+            return cached["data"]
+
+        def git_blob_sha1(content: bytes) -> str:
+            header = f"blob {len(content)}\0".encode()
+            return hashlib.sha1(header + content).hexdigest()  # noqa: S324  # git uses SHA-1
+
+        async def fetch_remote(ext: str, gh_dir: str, exe: str) -> dict[str, Any] | None:
+            url = f"https://api.github.com/repos/{DDC_REPO}/contents/{gh_dir}/{exe}?ref={DDC_BRANCH}"
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    r = await client.get(url, headers={"Accept": "application/vnd.github+json"})
+                    if r.status_code != 200:
+                        return None
+                    p = r.json()
+                    return {
+                        "sha": p.get("sha"),
+                        "size": p.get("size"),
+                        "download_url": p.get("download_url"),
+                        "html_url": p.get("html_url"),
+                    }
+            except Exception:  # noqa: BLE001 — degrade gracefully
+                return None
+
+        remote_calls = [fetch_remote(ext, gh_dir, exe) for ext, (gh_dir, exe, _) in WIN_DIRS.items()]
+        remote_results = await asyncio.gather(*remote_calls)
+
+        results: list[dict[str, Any]] = []
+        any_outdated = False
+        network_ok = False
+        for (ext, (gh_dir, exe, display)), remote in zip(WIN_DIRS.items(), remote_results, strict=True):
+            path = find_converter(ext)
+            installed = path is not None
+            local_sha: str | None = None
+            local_size: int | None = None
+            if installed:
+                try:
+                    content = path.read_bytes()
+                    local_sha = git_blob_sha1(content)
+                    local_size = len(content)
+                except OSError:
+                    pass
+
+            if remote is not None:
+                network_ok = True
+
+            is_outdated = bool(
+                installed and remote and local_sha and remote.get("sha") and local_sha != remote["sha"]
+            )
+            if is_outdated:
+                any_outdated = True
+
+            results.append({
+                "id": ext,
+                "name": display,
+                "exe": exe,
+                "installed": installed,
+                "installed_path": str(path) if path else None,
+                "installed_size": local_size,
+                "installed_sha": local_sha,
+                "latest_size": remote["size"] if remote else None,
+                "latest_sha": remote["sha"] if remote else None,
+                "is_outdated": is_outdated,
+                "download_url": remote["download_url"] if remote else None,
+                "html_url": remote["html_url"] if remote else None,
+            })
+
+        from datetime import datetime as _dt
+        from datetime import timezone as _tz
+        response = {
+            "converters": results,
+            "any_outdated": any_outdated,
+            "network_ok": network_ok,
+            "checked_at": _dt.now(_tz.utc).isoformat(),
+            "ttl_seconds": TTL,
+        }
+        if network_ok:
+            app.state._converter_version_cache = {"data": response, "checked_at_ts": time.time()}
+        return response
 
     @app.get("/api/system/modules", tags=["System"])
     async def list_modules(
