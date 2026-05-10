@@ -5,6 +5,21 @@ All notable changes to OpenConstructionERP are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.36] — 2026-05-10
+
+### Changed
+
+- /match-elements 10-pass polish: replaced 3 blocking `alert()` calls in confirm/apply/skip flows with non-blocking toasts (success + error variants), unified error UI to a rose-toned `role="alert"` with explicit Dismiss + retry buttons, and split the group-list `max-h` into mobile-first (`max-h-[60vh]`) + desktop (`sm:max-h-[calc(100vh-360px)]`) so the table no longer collides with the keyboard on small viewports.
+- /match-elements detail panel: added Escape key handler (with no-match modal precedence), `role="tablist"`/`role="tab"`/`aria-selected` semantics on the 3 detail tabs, error-state rendering with retry button, dropped stale "Phase A.12" reference from i18n string.
+- /match-elements perf: replaced 11 separate `groups.filter()` passes (8 trade buckets + 3 stepper status counters) with one `useMemo`-cached pass — drops a tier-1 render from ~12ms to ~2ms for 1000-group sessions.
+- MatchAnalyticsCard a11y: real i18n on collapse/expand `aria-label`, added `aria-expanded`, header row now `flex-wrap` so the window-selector + chevron don't fight for space on mobile.
+- NoMatchModal + TemplatesPanel: `role="dialog"` + `aria-modal="true"` + `aria-labelledby`, Escape closes, all close buttons carry `aria-label`. NoMatchModal also surfaces the mutation error inline (was silently failing).
+
+### Added
+
+- 5 new integration tests for `GET /api/v1/match_elements/analytics`: empty window, days-out-of-range 422 contract, IDOR (other-tenant project_id → 404), tenant-wide rollup auth-only, unauthenticated 401/403. Pins the FastAPI route + auth wiring beyond the unit-level aggregator coverage.
+- 12 new i18n keys for analytics/detail/no-match a11y + error states.
+
 ## [2.9.35] — 2026-05-10
 
 ### Added

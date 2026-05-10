@@ -4,7 +4,7 @@
 // Slide-over detail panel for a single match group.
 // 3 tabs: Elements · Method comparison · Apply preview.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { X, CheckCircle2, ChevronRight, Loader2, AlertCircle, XCircle } from 'lucide-react';
@@ -83,6 +83,21 @@ export function MatchDetailPanel({ sessionId, group, onClose }: Props) {
     [methods],
   );
 
+  // Escape closes the slide-over (parent listens for Escape too — this
+  // ensures the inner panel handles it first when the user is focused
+  // inside the table or footer). Only attaches while a group is active.
+  useEffect(() => {
+    if (!group) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !noMatchOpen) {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [group, noMatchOpen, onClose]);
+
   if (!group) return null;
 
   return (
@@ -123,17 +138,29 @@ export function MatchDetailPanel({ sessionId, group, onClose }: Props) {
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
+            aria-label={t('match_elements.detail.close', 'Close detail panel')}
             className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800"
           >
             <X className="w-5 h-5" />
           </button>
         </header>
 
-        <nav className="px-4 border-b border-slate-200 dark:border-slate-700 flex gap-1">
+        <nav
+          className="px-4 border-b border-slate-200 dark:border-slate-700 flex gap-1"
+          role="tablist"
+          aria-label={t('match_elements.detail.tabs_label', 'Detail panel sections')}
+        >
           {(['methods', 'elements', 'apply'] as const).map((tabKey) => (
             <button
               key={tabKey}
+              type="button"
+              role="tab"
+              id={`detail-tab-${tabKey}`}
+              aria-selected={tab === tabKey}
+              aria-controls={`detail-tabpanel-${tabKey}`}
+              tabIndex={tab === tabKey ? 0 : -1}
               onClick={() => setTab(tabKey)}
               className={`px-3 py-2 text-sm border-b-2 transition ${
                 tab === tabKey
@@ -158,9 +185,33 @@ export function MatchDetailPanel({ sessionId, group, onClose }: Props) {
             </div>
           )}
 
+          {detailQ.isError && !detailQ.isLoading && (
+            <div
+              className="rounded border border-rose-300 dark:border-rose-700 bg-rose-50 dark:bg-rose-900/20 px-3 py-3 text-sm text-rose-800 dark:text-rose-100 flex items-start gap-2"
+              role="alert"
+            >
+              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="font-semibold">
+                  {t('match_elements.detail.error_title', 'Could not load detail')}
+                </div>
+                <div className="text-xs mt-0.5 break-all opacity-80">
+                  {String((detailQ.error as Error | null)?.message ?? detailQ.error ?? '')}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => detailQ.refetch()}
+                  className="mt-1.5 text-xs underline hover:opacity-80"
+                >
+                  {t('match_elements.detail.retry', 'Retry')}
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Tab: methods */}
           {tab === 'methods' && detailQ.data && (
-            <div>
+            <div role="tabpanel" id="detail-tabpanel-methods" aria-labelledby="detail-tab-methods">
               {methodNames.length === 0 && (
                 <div className="text-center py-12 text-slate-500">
                   <AlertCircle className="w-6 h-6 mx-auto mb-2 opacity-40" />
@@ -225,9 +276,9 @@ export function MatchDetailPanel({ sessionId, group, onClose }: Props) {
 
           {/* Tab: elements */}
           {tab === 'elements' && detailQ.data && (
-            <div>
+            <div role="tabpanel" id="detail-tabpanel-elements" aria-labelledby="detail-tab-elements">
               <p className="text-xs text-slate-500 mb-2">
-                {t('match_elements.detail.element_ids_count', '{{count}} element id(s). 3D-highlight integration in Phase A.12.', { count: detailQ.data.element_ids.length })}
+                {t('match_elements.detail.element_ids_count', '{{count}} element id(s)', { count: detailQ.data.element_ids.length })}
               </p>
               <div className="font-mono text-xs leading-tight max-h-[60vh] overflow-auto bg-slate-50 dark:bg-slate-800 p-2 rounded">
                 {detailQ.data.element_ids.slice(0, 200).map((id) => (
@@ -242,7 +293,7 @@ export function MatchDetailPanel({ sessionId, group, onClose }: Props) {
 
           {/* Tab: apply preview */}
           {tab === 'apply' && (
-            <div>
+            <div role="tabpanel" id="detail-tabpanel-apply" aria-labelledby="detail-tab-apply">
               {applyQ.isLoading && (
                 <div className="text-center text-slate-500 py-8">
                   <Loader2 className="w-5 h-5 animate-spin inline mr-2" />

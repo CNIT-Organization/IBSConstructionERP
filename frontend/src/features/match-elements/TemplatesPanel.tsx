@@ -3,6 +3,7 @@
 //
 // Tenant-scoped match-template library (cross-project memory).
 
+import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { X, Trash2, Loader2, Library } from 'lucide-react';
@@ -25,20 +26,41 @@ export function TemplatesPanel({ onClose }: Props) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['match-templates'] }),
   });
 
+  // Escape closes the slide-over.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
   return (
     <>
       <div className="fixed inset-0 bg-black/30 z-40" onClick={onClose} aria-hidden />
-      <aside className="fixed top-0 right-0 bottom-0 w-full sm:w-[560px] bg-white dark:bg-slate-900 z-50 shadow-2xl flex flex-col border-l border-slate-200 dark:border-slate-700">
+      <aside
+        className="fixed top-0 right-0 bottom-0 w-full sm:w-[560px] bg-white dark:bg-slate-900 z-50 shadow-2xl flex flex-col border-l border-slate-200 dark:border-slate-700"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="templates-panel-heading"
+      >
         <header className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Library className="w-5 h-5 text-indigo-500" />
-            <h2 className="text-base font-semibold">{t('match_elements.templates.title', 'Template library')}</h2>
+            <h2 id="templates-panel-heading" className="text-base font-semibold">
+              {t('match_elements.templates.title', 'Template library')}
+            </h2>
             <span className="text-xs text-slate-500">
               {listQ.data ? t('match_elements.templates.count', '{{count}} signatures', { count: listQ.data.length }) : ''}
             </span>
           </div>
           <button
+            type="button"
             onClick={onClose}
+            aria-label={t('match_elements.templates.close', 'Close template library')}
             className="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800"
           >
             <X className="w-5 h-5" />

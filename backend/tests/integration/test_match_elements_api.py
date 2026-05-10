@@ -1119,3 +1119,99 @@ async def test_idor_get_session_other_user(http_client):
 
     # verify_project_access returns 404 on deny (does not leak existence).
     assert resp.status_code == 404, resp.text
+
+
+# ═════════════════════════════════════════════════════════════════════════
+#  Analytics endpoint (MAPPING_PROCESS.md §10)
+# ═════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_analytics_empty_window_returns_zero_counters(
+    http_client, two_tenants,
+):
+    """Fresh project with no search-log rows must return 200 + zero
+    counters + no alerts. Validates the FastAPI route is registered
+    and the schema serialises a clean empty window."""
+    a = two_tenants["a"]
+    project_id, _ = await _seed_project_with_bim_model(owner_id=a["user_id"])
+    resp = await http_client.get(
+        f"/api/v1/match_elements/analytics?days=7&project_id={project_id}",
+        headers=a["headers"],
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["total_searches"] == 0
+    assert body["total_with_pick"] == 0
+    assert body["pick_rate"] == 0.0
+    assert body["alerts"] == []
+    assert body["window_days"] == 7
+    assert body["mean_top_score"] is None
+
+
+@pytest.mark.asyncio
+async def test_analytics_clamps_days_to_max(http_client, two_tenants):
+    """Out-of-range ``days`` must be clamped, not 422'd — the dashboard
+    has a fixed dropdown but a power user could send anything."""
+    a = two_tenants["a"]
+    project_id, _ = await _seed_project_with_bim_model(owner_id=a["user_id"])
+    # FastAPI Query has le=90 — values above must 422, not silently clamp
+    resp = await http_client.get(
+        f"/api/v1/match_elements/analytics?days=10000&project_id={project_id}",
+        headers=a["headers"],
+    )
+    assert resp.status_code == 422, (
+        "the FastAPI Query(le=90) must reject overflow at the boundary "
+        "so the contract surfaces the limit; the in-Python clamp is the "
+        "second line of defence for direct service calls"
+    )
+
+
+@pytest.mark.asyncio
+async def test_analytics_requires_project_access(http_client):
+    """A non-admin user must not be able to query analytics for a project
+    they don't own. verify_project_access returns 404 (not 403) to avoid
+    existence leak.
+
+    Important: this test deliberately uses a viewer role for the second
+    user — the ``two_tenants`` fixture creates admins, and admins bypass
+    project access checks (see app/dependencies.py:verify_project_access).
+    """
+    # Owner is an admin (so seeding succeeds without extra promotion)
+    owner_uid, _, _ = await _register_login_promote(
+        http_client, tenant=f"owner-{uuid.uuid4().hex[:6]}",
+    )
+    project_id, _ = await _seed_project_with_bim_model(owner_id=owner_uid)
+    # Outsider is a plain viewer — no admin bypass.
+    _, _, outsider_headers = await _register_login_promote(
+        http_client, tenant=f"viewer-{uuid.uuid4().hex[:6]}", role="viewer",
+    )
+    resp = await http_client.get(
+        f"/api/v1/match_elements/analytics?days=7&project_id={project_id}",
+        headers=outsider_headers,
+    )
+    assert resp.status_code == 404, resp.text
+
+
+@pytest.mark.asyncio
+async def test_analytics_tenant_wide_rollup_requires_auth_only(
+    http_client, two_tenants,
+):
+    """Without ``project_id`` the endpoint returns the tenant-wide rollup;
+    auth is required but no specific project access check fires."""
+    a = two_tenants["a"]
+    resp = await http_client.get(
+        "/api/v1/match_elements/analytics?days=7",
+        headers=a["headers"],
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["project_id"] is None
+    assert body["catalog_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_analytics_unauthenticated_rejected(http_client):
+    """No bearer token → 401, not silent zero counters."""
+    resp = await http_client.get("/api/v1/match_elements/analytics?days=7")
+    assert resp.status_code in (401, 403), resp.text

@@ -234,7 +234,7 @@ export function MatchAnalyticsCard({ projectId }: MatchAnalyticsCardProps) {
 
   return (
     <div className={`rounded-xl border ${headerTone}`}>
-      <div className="w-full flex items-center gap-2 px-3 py-2">
+      <div className="w-full flex flex-wrap items-center gap-2 px-3 py-2">
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
@@ -293,7 +293,12 @@ export function MatchAnalyticsCard({ projectId }: MatchAnalyticsCardProps) {
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
-          aria-label={open ? 'collapse' : 'expand'}
+          aria-label={
+            open
+              ? t('match_elements.analytics_collapse', 'Collapse analytics')
+              : t('match_elements.analytics_expand', 'Expand analytics')
+          }
+          aria-expanded={open}
           className="shrink-0 p-1 text-content-tertiary hover:text-content-primary"
         >
           {open ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}

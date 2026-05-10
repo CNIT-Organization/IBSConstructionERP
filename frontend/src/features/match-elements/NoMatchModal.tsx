@@ -3,7 +3,7 @@
 //
 // No-match action modal: Custom position · Send to RFQ · Mark TBD.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { X, FileEdit, Send, Clock, Loader2 } from 'lucide-react';
@@ -46,6 +46,19 @@ export function NoMatchModal({ sessionId, groupKey, onClose, onDone }: Props) {
     },
   });
 
+  // Escape closes the modal regardless of which radio is focused.
+  // The dialog is always mounted by the parent so this hook always runs.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
   const opts: Array<{ value: Action; icon: typeof FileEdit; title: string; sub: string }> = [
     {
       value: 'custom',
@@ -71,14 +84,24 @@ export function NoMatchModal({ sessionId, groupKey, onClose, onDone }: Props) {
     <div
       className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4"
       onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="no-match-modal-heading"
     >
       <div
         className="bg-white dark:bg-slate-900 rounded-lg shadow-2xl w-full max-w-lg border border-slate-200 dark:border-slate-700"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
-          <h3 className="text-base font-semibold">{t('match_elements.no_match.heading', 'No match — choose action')}</h3>
-          <button onClick={onClose} className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800">
+          <h3 id="no-match-modal-heading" className="text-base font-semibold">
+            {t('match_elements.no_match.heading', 'No match — choose action')}
+          </h3>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={t('match_elements.no_match.close', 'Close no-match dialog')}
+            className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800"
+          >
             <X className="w-5 h-5" />
           </button>
         </header>
@@ -143,14 +166,27 @@ export function NoMatchModal({ sessionId, groupKey, onClose, onDone }: Props) {
           )}
         </div>
 
+        {mut.isError && (
+          <div
+            className="mx-4 mb-3 -mt-1 rounded border border-rose-300 dark:border-rose-700 bg-rose-50 dark:bg-rose-900/20 px-3 py-2 text-xs text-rose-800 dark:text-rose-100"
+            role="alert"
+          >
+            {t('match_elements.no_match.error', 'Could not apply: {{error}}', {
+              error: String((mut.error as Error | null)?.message ?? mut.error ?? ''),
+            })}
+          </div>
+        )}
+
         <footer className="px-4 py-3 border-t border-slate-200 dark:border-slate-700 flex items-center justify-end gap-2">
           <button
+            type="button"
             onClick={onClose}
             className="px-3 py-1.5 text-sm rounded border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
           >
             {t('match_elements.no_match.cancel', 'Cancel')}
           </button>
           <button
+            type="button"
             onClick={() => mut.mutate()}
             disabled={mut.isPending}
             className="px-3 py-1.5 text-sm rounded bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50 inline-flex items-center gap-1.5"

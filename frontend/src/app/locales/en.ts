@@ -4609,6 +4609,20 @@ const resource = {
     "match_elements.analytics_by_ifc": "By IFC class",
     "match_elements.analytics_breakdown_empty": "no data",
     "match_elements.analytics_footer": "Generated {{at}} · {{ref}}",
+    "match_elements.analytics_collapse": "Collapse analytics",
+    "match_elements.analytics_expand": "Expand analytics",
+    "match_elements.detail.close": "Close detail panel",
+    "match_elements.detail.tabs_label": "Detail panel sections",
+    "match_elements.detail.error_title": "Could not load detail",
+    "match_elements.detail.retry": "Retry",
+    "match_elements.no_match.close": "Close no-match dialog",
+    "match_elements.no_match.error": "Could not apply: {{error}}",
+    "match_elements.templates.close": "Close template library",
+    "match_elements.error_dismiss": "Dismiss",
+    "match_elements.detail_for": "Open detail panel for {{label}}",
+    "match_elements.alert.bulk_confirm_failed": "Bulk confirm failed",
+    "match_elements.alert.apply_failed": "Apply to BOQ failed",
+    "match_elements.alert.skip_failed": "Skip failed",
   }
 } as { translation: Record<string, string> };
 
