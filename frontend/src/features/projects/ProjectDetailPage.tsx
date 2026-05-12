@@ -34,6 +34,7 @@ import {
   FolderOpen,
   HardHat,
   Calendar,
+  Image as ImageIcon,
 } from 'lucide-react';
 import {
   Button, Card, CardHeader, Badge, Skeleton, EmptyState, Breadcrumb,
@@ -43,6 +44,7 @@ import { useWidgetSettingsStore } from '@/stores/useWidgetSettingsStore';
 import { apiGet, apiPatch, ApiError } from '@/shared/lib/api';
 import clsx from 'clsx';
 import { projectsApi, type Project } from './api';
+import { PhotosTab } from './PhotosTab';
 import { useProjectContextStore } from '@/stores/useProjectContextStore';
 import { useRecentStore } from '@/stores/useRecentStore';
 import { useAuthStore } from '@/stores/useAuthStore';
@@ -97,7 +99,7 @@ interface ImportResult {
 // Tab types
 // ---------------------------------------------------------------------------
 
-type ProjectTab = 'dashboard' | 'overview' | 'schedule' | 'budget' | 'tendering';
+type ProjectTab = 'dashboard' | 'overview' | 'schedule' | 'budget' | 'tendering' | 'photos';
 
 interface ScheduleItem {
   id: string;
@@ -1552,6 +1554,7 @@ export function ProjectDetailPage() {
           { key: 'schedule' as ProjectTab, label: t('projects.4d_schedule'), icon: <CalendarClock size={15} /> },
           { key: 'budget' as ProjectTab, label: t('projects.5d_budget'), icon: <Wallet size={15} /> },
           { key: 'tendering' as ProjectTab, label: t('projects.tendering'), icon: <Gavel size={15} /> },
+          { key: 'photos' as ProjectTab, label: t('projects.photos.tab_label', { defaultValue: 'Photos' }), icon: <ImageIcon size={15} /> },
         ]).map((tab) => (
           <button
             key={tab.key}
@@ -2421,6 +2424,13 @@ export function ProjectDetailPage() {
             )}
           </div>
         </Card>
+        </TabErrorBoundary>
+      )}
+
+      {/* Photos Tab — gallery of all photo uploads for the project */}
+      {activeTab === 'photos' && (
+        <TabErrorBoundary fallbackTitle="Photos failed to load">
+          <PhotosTab projectId={projectId ?? null} />
         </TabErrorBoundary>
       )}
 
