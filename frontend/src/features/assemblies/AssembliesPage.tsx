@@ -19,6 +19,7 @@ import {
   type AIGeneratedAssembly,
 } from './api';
 import { CreateAssemblyModal } from './CreateAssemblyPage';
+import { DashboardBackdrop } from '../dashboard/components/DashboardBackdrop';
 
 /* -- Constants ------------------------------------------------------------ */
 
@@ -95,6 +96,7 @@ export function AssembliesPage() {
   const [showAiGenerate, setShowAiGenerate] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [tagFilter, setTagFilter] = useState('');
+  const [showHelp, setShowHelp] = useState(false);
 
   // Debounce search query (300ms)
   useEffect(() => {
@@ -158,20 +160,26 @@ export function AssembliesPage() {
     }).format(n);
 
   return (
-    <div className="w-full animate-fade-in">
-      {/* Header */}
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-content-primary">
+    <div className="relative isolate w-full animate-fade-in">
+      <DashboardBackdrop />
+      {/* Header — compact single-row: title + counter chip + action stack
+          on the right. The previous header burned ~80px on a 2xl headline +
+          paragraph subtitle that just restated what the page is. */}
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <span className="shrink-0 w-7 h-7 rounded-lg bg-gradient-to-br from-oe-blue to-sky-500 text-white inline-flex items-center justify-center shadow-sm">
+            <Layers className="w-3.5 h-3.5" />
+          </span>
+          <h1 className="text-base lg:text-lg leading-none font-semibold text-content-primary">
             {t('assemblies.title', 'Assemblies')}
           </h1>
-          <p className="mt-1 text-sm text-content-secondary">
+          <span className="text-xs text-content-tertiary tabular-nums">
             {total > 0
               ? `${total} ${t('assemblies.assemblies_found', 'assemblies')}`
-              : t('assemblies.description', 'Reusable cost recipes for common construction elements')}
-          </p>
+              : t('assemblies.description', 'Reusable cost recipes')}
+          </span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           <div className="relative">
             <Button
               variant="secondary"
@@ -251,12 +259,23 @@ export function AssembliesPage() {
         </div>
       </div>
 
-      {/* Explanation */}
-      <InfoHint className="mb-4" text={t('assemblies.what_are_assemblies', { defaultValue: 'Assemblies are reusable cost recipes that combine multiple resources (materials, labor, equipment) into a single composite rate. For example, a "Reinforced Concrete Wall" assembly includes concrete, rebar, formwork, and labor. Apply assemblies to BOQ positions to auto-populate component costs.' })} />
+      {/* Explanation — collapsible. The full assemblies recipe metaphor
+          is helpful on first visit but turns into chrome on every return;
+          gated behind a tiny "What are assemblies?" toggle so it doesn't
+          eat ~80px on every page load. */}
+      {showHelp && (
+        <InfoHint
+          className="mb-3"
+          text={t('assemblies.what_are_assemblies', {
+            defaultValue:
+              'Assemblies are reusable cost recipes that combine multiple resources (materials, labor, equipment) into a single composite rate. For example, a "Reinforced Concrete Wall" assembly includes concrete, rebar, formwork, and labor. Apply assemblies to BOQ positions to auto-populate component costs.',
+          })}
+        />
+      )}
 
-      {/* Search & Filters */}
-      <Card padding="none" className="mb-6">
-        <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-end">
+      {/* Search & Filters — flat toolbar (was a Card with internal p-4
+          giving a card-in-card look). 32px less vertical chrome. */}
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-end">
           {/* Search input */}
           <div className="relative flex-1">
             <label htmlFor="assemblies-search" className="sr-only">
@@ -319,8 +338,21 @@ export function AssembliesPage() {
               className="h-10 w-full rounded-lg border border-border bg-surface-primary pl-9 pr-3 text-sm text-content-primary placeholder:text-content-tertiary transition-all duration-fast ease-oe focus:outline-none focus:ring-2 focus:ring-oe-blue focus:border-transparent hover:border-content-tertiary sm:w-40"
             />
           </div>
-        </div>
-      </Card>
+
+          {/* "What are assemblies?" toggle — sits inline with the filter
+              row so the help banner is one click away without taking
+              up vertical space by default. */}
+          <button
+            type="button"
+            onClick={() => setShowHelp((v) => !v)}
+            className="h-10 px-3 text-xs rounded-lg border border-border-light text-content-tertiary hover:border-content-tertiary hover:text-content-secondary transition-colors inline-flex items-center gap-1.5 shrink-0"
+            title={t('assemblies.what_are_assemblies_toggle', { defaultValue: 'What are assemblies?' })}
+          >
+            {showHelp
+              ? t('common.hide_help', { defaultValue: 'Hide help' })
+              : t('assemblies.what_are_assemblies_toggle', { defaultValue: 'What are assemblies?' })}
+          </button>
+      </div>
 
       {/* Results */}
       {isLoading ? (
@@ -351,7 +383,7 @@ export function AssembliesPage() {
         />
       ) : (
         <>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {items.map((assembly) => (
               <AssemblyCard
                 key={assembly.id}
@@ -847,9 +879,9 @@ function AssemblyCard({
         />
       )}
 
-      <div className="p-5">
+      <div className="p-4">
         {/* Top row: code + menu */}
-        <div className="flex items-start justify-between mb-1.5">
+        <div className="flex items-start justify-between mb-1">
           <p className="text-xs font-mono text-content-tertiary">{assembly.code}</p>
           <div className="flex items-center gap-1">
             <button
@@ -933,7 +965,7 @@ function AssemblyCard({
         </div>
 
         {/* Rate */}
-        <p className="mt-3 text-lg font-bold tabular-nums" style={{ color: assembly.total_rate > 0 ? undefined : 'var(--color-content-tertiary)' }}>
+        <p className="mt-2 text-lg font-bold tabular-nums" style={{ color: assembly.total_rate > 0 ? undefined : 'var(--color-content-tertiary)' }}>
           {assembly.total_rate > 0 ? fmt(assembly.total_rate) : '0,00'}
           <span className="ml-1 text-xs font-normal text-content-tertiary">
             / {assembly.unit}
@@ -946,7 +978,7 @@ function AssemblyCard({
         </p>
 
         {/* Category + currency badges */}
-        <div className="mt-3 flex flex-wrap items-center gap-1.5">
+        <div className="mt-2 flex flex-wrap items-center gap-1">
           {assembly.category && (
             <Badge variant={badgeVariant} size="sm">
               {assembly.category}
