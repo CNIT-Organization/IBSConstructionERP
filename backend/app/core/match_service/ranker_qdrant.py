@@ -241,6 +241,21 @@ async def _resolve_catalog_status(
         logger.warning("ranker_qdrant: catalog count failed for %s: %s", catalog_id, exc)
         sql_count = 0
 
+    # SQL count is informational, not gating. Under v3 the canonical
+    # source is Qdrant — the SQL ``oe_costs_item`` table only carries
+    # rows when the operator imported a CWICR CSV/parquet, which is
+    # optional once the v3 snapshot is loaded. The language-fallback
+    # bindings minted by ``auto_bind`` Pass 1b (``US`` for English,
+    # ``DE`` for German, etc.) intentionally have ``sql_count == 0``
+    # while pointing at a populated CWICR collection. Probe Qdrant
+    # first; only fall through to "no catalogue" when BOTH stores are
+    # empty.
+    vec_count = await _qdrant_vector_count(catalog_id)
+    if vec_count > 0:
+        result = ("ok", int(sql_count), int(vec_count))
+        _catalog_status_cache[catalog_id] = (now, result)
+        return result
+
     if sql_count == 0:
         try:
             total_loaded = (
@@ -257,12 +272,7 @@ async def _resolve_catalog_status(
         _catalog_status_cache[catalog_id] = (now, result)
         return result
 
-    vec_count = await _qdrant_vector_count(catalog_id)
-    if vec_count == 0:
-        result = ("catalog_not_vectorized", int(sql_count), 0)
-        _catalog_status_cache[catalog_id] = (now, result)
-        return result
-    result = ("ok", int(sql_count), int(vec_count))
+    result = ("catalog_not_vectorized", int(sql_count), 0)
     _catalog_status_cache[catalog_id] = (now, result)
     return result
 

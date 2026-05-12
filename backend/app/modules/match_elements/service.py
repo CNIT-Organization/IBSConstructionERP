@@ -483,7 +483,75 @@ def _aggregate_quantities(elements: list[SourceElement]) -> dict[str, float]:
     return dict(out)
 
 
-def _pick_unit(quantities: dict[str, float]) -> str:
+# Fallback unit per IFC class when explicit quantities are missing. Used
+# when the BIM extractor could not derive volume/area/length (e.g. an IFC
+# file without proper Qto_* property sets, or an early-design Revit model
+# where the only quantity is the count). Without this fallback every
+# such group defaults to "pcs" and the matcher then picks count-priced
+# catalogue rows for elements that should be priced by area or volume.
+#
+# Values follow industry pricing convention:
+#   m3  — bulk concrete / earthworks elements priced by volume
+#   m2  — surface elements priced by area (slabs, roofs, coverings)
+#   m   — linear elements priced by length (beams, columns, pipes)
+#   pcs — discrete elements priced per unit (doors, windows, furniture)
+#
+# A class missing from the table returns None so the caller can keep its
+# own default. Stem matching ("IfcWallStandardCase" → "IfcWall") keeps
+# the table compact.
+_IFC_NATURAL_UNIT: dict[str, str] = {
+    "IfcWall":        "m3",
+    "IfcSlab":        "m2",
+    "IfcRoof":        "m2",
+    "IfcCovering":    "m2",
+    "IfcCeiling":     "m2",
+    "IfcCurtainWall": "m2",
+    "IfcSpace":       "m2",
+    "IfcBeam":        "m",
+    "IfcColumn":      "m",
+    "IfcMember":      "m",
+    "IfcPlate":       "m2",
+    "IfcFooting":     "m3",
+    "IfcPile":        "m",
+    "IfcRamp":        "m2",
+    "IfcRailing":     "m",
+    "IfcStair":       "pcs",
+    "IfcStairFlight": "m2",
+    "IfcDoor":        "pcs",
+    "IfcWindow":      "pcs",
+    "IfcOpeningElement":   "pcs",
+    "IfcFurniture":        "pcs",
+    "IfcFurnishingElement": "pcs",
+    "IfcReinforcingBar":   "kg",
+    "IfcPipeSegment":      "m",
+    "IfcDuctSegment":      "m",
+    "IfcCableSegment":     "m",
+    "IfcCableCarrierSegment": "m",
+    "IfcChimney":          "pcs",
+}
+
+
+def _ifc_natural_unit(ifc_class: str | None) -> str | None:
+    """Return the typical pricing unit for an IFC class, or None if unknown.
+
+    Falls back to a stem match — ``IfcWallStandardCase`` → ``IfcWall`` —
+    so subtype variants resolve without a table entry each.
+    """
+    if not ifc_class:
+        return None
+    cls = str(ifc_class)
+    if cls in _IFC_NATURAL_UNIT:
+        return _IFC_NATURAL_UNIT[cls]
+    # Stem fallback: strip common suffixes once.
+    for suffix in ("StandardCase", "ElementedCase", "BaseQuantities", "Type"):
+        if cls.endswith(suffix):
+            base = cls[: -len(suffix)]
+            if base in _IFC_NATURAL_UNIT:
+                return _IFC_NATURAL_UNIT[base]
+    return None
+
+
+def _pick_unit(quantities: dict[str, float], *, ifc_class: str | None = None) -> str:
     """Auto-pick the natural unit for a group by dimensional specificity.
 
     Construction estimating prices the most specific dimension first:
@@ -492,6 +560,12 @@ def _pick_unit(quantities: dict[str, float]) -> str:
     wins in that order. Sorting by numeric value would always favour
     count (integers ≫ m³ values for multi-element groups) and route
     every wall group to a per-piece rate.
+
+    When no dimension carries a positive value (a common case for IFC
+    files exported without ``Qto_*`` property sets), falls back to the
+    IFC class's natural pricing unit via :func:`_ifc_natural_unit`. This
+    lets IfcWall groups land on m³-priced catalogue rows even when the
+    file only carries element counts.
     """
     for unit, key in (
         ("m3", "volume_m3"),
@@ -503,10 +577,17 @@ def _pick_unit(quantities: dict[str, float]) -> str:
         v = quantities.get(key, 0.0) or 0.0
         try:
             if float(v) > 0:
+                # Don't trust ``count`` when the class is normally priced
+                # by surface or volume — the dimension-less default would
+                # land on per-piece rates instead of per-m².
+                if unit == "pcs":
+                    fallback = _ifc_natural_unit(ifc_class)
+                    if fallback and fallback != "pcs":
+                        return fallback
                 return unit
         except (TypeError, ValueError):
             continue
-    return "pcs"
+    return _ifc_natural_unit(ifc_class) or "pcs"
 
 
 def _quantity_for_unit(quantities: dict[str, float], unit: str) -> float:
@@ -789,8 +870,8 @@ def _envelope_from_group(
         parts.append("load-bearing")
 
     description = ", ".join(parts)[:1000]
-    unit = _pick_unit(quantities)
-    unit_hint_map = {"m3": "m3", "m2": "m2", "m": "m", "pcs": "pcs"}
+    unit = _pick_unit(quantities, ifc_class=sample.category)
+    unit_hint_map = {"m3": "m3", "m2": "m2", "m": "m", "kg": "kg", "pcs": "pcs"}
 
     # Only forward small primitive properties — the matcher uses these
     # for boost lookups, not for embedding text.
@@ -1505,7 +1586,9 @@ class MatchElementsService:
                 # routes the group through the wrong dimensional gate
                 # in apply_to_boq.
                 if not existing_row.chosen_unit:
-                    existing_row.chosen_unit = _pick_unit(qty)
+                    existing_row.chosen_unit = _pick_unit(
+                        qty, ifc_class=_ifc_class_from_group_key(key),
+                    )
                 continue
             row = MatchGroup(
                 session_id=session_id,
@@ -1514,7 +1597,7 @@ class MatchElementsService:
                 element_ids=[m.id for m in members],
                 element_count=len(members),
                 quantities=qty,
-                chosen_unit=_pick_unit(qty),
+                chosen_unit=_pick_unit(qty, ifc_class=_ifc_class_from_group_key(key)),
                 methods={},
                 status="unmatched",
             )
@@ -1559,7 +1642,7 @@ class MatchElementsService:
             ifc_class = _ifc_class_from_group_key(r.group_key)
             meta = ifc_labels.lookup(ifc_class) if ifc_class else ifc_labels.lookup(None)
             qty = dict(r.quantities or {})
-            unit = r.chosen_unit or _pick_unit(qty)
+            unit = r.chosen_unit or _pick_unit(qty, ifc_class=ifc_class)
             primary = _quantity_for_unit(qty, unit)
 
             # Gross/net pair — only meaningful for area/volume units.
@@ -1646,7 +1729,7 @@ class MatchElementsService:
         ifc_class = _ifc_class_from_group_key(row.group_key)
         meta = ifc_labels.lookup(ifc_class) if ifc_class else ifc_labels.lookup(None)
         qty = dict(row.quantities or {})
-        unit = row.chosen_unit or _pick_unit(qty)
+        unit = row.chosen_unit or _pick_unit(qty, ifc_class=ifc_class)
         gross_q = net_q = None
         opening_warning = False
         if unit == "m3":
@@ -1865,12 +1948,27 @@ class MatchElementsService:
                     ).scalar() or 0
                 except Exception:
                     rows_in_bound = 0
-            if not bound_catalogue_id or rows_in_bound == 0:
+            # Probe both SQL and Qdrant. The bound catalogue is usable
+            # if EITHER has data: SQL-only is the legacy CWICR install
+            # path; Qdrant-only is the new v3 snapshot path (language
+            # fallback bindings like ``US`` for an ASIA_PAC project have
+            # 0 SQL rows but populated Qdrant collections).
+            from app.core.match_service.ranker_qdrant import (  # noqa: PLC0415
+                _resolve_catalog_status,
+            )
+            try:
+                _cat_status, _sql_cnt, _vec_cnt = await _resolve_catalog_status(
+                    db, bound_catalogue_id,
+                )
+            except Exception:  # noqa: BLE001
+                _cat_status, _sql_cnt, _vec_cnt = "ok", rows_in_bound, 1
+            if not bound_catalogue_id or (rows_in_bound == 0 and _vec_cnt == 0):
                 logger.warning(
-                    "match_elements.run_match: bound catalogue has no rows — "
-                    "session=%s project=%s catalogue=%r rows=%d",
+                    "match_elements.run_match: bound catalogue has no "
+                    "data — session=%s project=%s catalogue=%r "
+                    "sql=%d vec=%d",
                     session_id, sess.project_id,
-                    bound_catalogue_id, rows_in_bound,
+                    bound_catalogue_id, rows_in_bound, _vec_cnt,
                 )
                 self._write_progress(
                     session_id,
@@ -1895,21 +1993,6 @@ class MatchElementsService:
                 )
                 return []
 
-            # Second short-circuit: SQL has rows but Qdrant collection is
-            # empty / missing / version-mismatched. Without this guard
-            # every group fires a Qdrant search that fails or returns []
-            # — each takes 6+ s of round-trip + retry budget, so a 15-
-            # group run was burning ~100 s producing 0 matches. The
-            # resolver caches result for 30 s, so this probe is cheap.
-            from app.core.match_service.ranker_qdrant import (  # noqa: PLC0415
-                _resolve_catalog_status,
-            )
-            try:
-                _cat_status, _sql_cnt, _vec_cnt = await _resolve_catalog_status(
-                    db, bound_catalogue_id,
-                )
-            except Exception:  # noqa: BLE001
-                _cat_status, _sql_cnt, _vec_cnt = "ok", rows_in_bound, 1
             if _vec_cnt == 0:
                 logger.warning(
                     "match_elements.run_match: bound catalogue has no "
@@ -2095,7 +2178,7 @@ class MatchElementsService:
 
             ifc_class = _ifc_class_from_group_key(grow.group_key)
             meta = ifc_labels.lookup(ifc_class) if ifc_class else ifc_labels.lookup(None)
-            unit = grow.chosen_unit or _pick_unit(grow.quantities or {})
+            unit = grow.chosen_unit or _pick_unit(grow.quantities or {}, ifc_class=ifc_class)
             primary = _quantity_for_unit(grow.quantities or {}, unit)
             top = candidates[0] if candidates else None
             confidence_band = "none"

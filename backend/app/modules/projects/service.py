@@ -700,12 +700,42 @@ async def auto_bind_dominant_catalogue(
     from app.modules.projects.models import Project  # noqa: PLC0415
 
     row = await get_or_create_match_settings(db, project_id)
+    # Resolve the project's preferred catalogue language early — we need
+    # it both to decide whether to keep the current binding and to seed
+    # Pass 1 below. Two signals, in order of trust:
+    #   1. ``match_settings.target_language`` — explicit user choice, the
+    #      most direct signal of what language descriptions they want.
+    #   2. ``project.region`` → ``language_for()`` — geographic inference,
+    #      used when the user hasn't picked a target language.
+    # Without the target_language fallback, projects with an empty region
+    # (E2E fixtures, freshly-created projects, or anything imported without
+    # a country tag) get ``project_lang=None`` and skip Pass 1+1b entirely,
+    # falling through to Pass 2 which binds whichever catalogue has the
+    # most SQL rows — typically Russian.
+    project_lang: str | None = None
+    try:
+        proj = await db.get(Project, project_id)
+        if proj and proj.region:
+            project_lang = language_for(proj.region)
+    except Exception:
+        project_lang = None
+    if not project_lang:
+        tl = (getattr(row, "target_language", None) or "").strip().lower()
+        if tl:
+            project_lang = tl
+    logger.debug(
+        "auto_bind_dominant_catalogue: project=%s project_lang=%r current_binding=%r",
+        project_id, project_lang, row.cost_database_id,
+    )
+
     if row.cost_database_id:
-        # Verify the current binding still has rows — a project that
-        # bound to a catalogue which was later unloaded (e.g. dev DB
-        # rebuilt with a different region) otherwise stays pinned to a
-        # zero-row binding and every match returns empty. Re-bind when
-        # the current binding is stale; keep when it's still populated.
+        # Verify the current binding still has rows AND speaks the same
+        # language as the project's region. A project that bound to a
+        # catalogue which was later unloaded otherwise stays pinned to a
+        # zero-row binding and every match returns empty; an ASIA_PAC
+        # project that auto-bound to RU_STPETERSBURG once stays pinned
+        # there forever and the matcher works against Russian payloads.
+        # Re-bind when stale or language-mismatched; keep otherwise.
         try:
             current_count = (
                 await db.execute(
@@ -716,23 +746,26 @@ async def auto_bind_dominant_catalogue(
             ).scalar() or 0
         except Exception:
             current_count = 1  # defensive: keep current binding on lookup error
-        if current_count > 0:
+        current_lang = language_for(row.cost_database_id) if row.cost_database_id else None
+        # Language mismatch is only a reason to re-bind when we actually
+        # have a language target — otherwise we'd thrash on projects with
+        # no resolvable region.
+        lang_mismatch = bool(
+            project_lang and current_lang and project_lang != current_lang
+        )
+        if current_count > 0 and not lang_mismatch:
             return row.cost_database_id
+        reason = "0 rows" if current_count == 0 else f"language {current_lang!r} != project {project_lang!r}"
         logger.info(
-            "auto_bind_dominant_catalogue: re-binding %s — current %r has 0 rows",
-            project_id, row.cost_database_id,
+            "auto_bind_dominant_catalogue: re-binding %s — current %r %s",
+            project_id, row.cost_database_id, reason,
         )
         row.cost_database_id = None
 
-    # Resolve the project's preferred catalogue language so we can
-    # bias selection toward language-matching candidates first.
-    project_lang: str | None = None
-    try:
-        proj = await db.get(Project, project_id)
-        if proj and proj.region:
-            project_lang = language_for(proj.region)
-    except Exception:  # pragma: no cover — defensive
-        project_lang = None
+    # ``project_lang`` resolved above; Pass 1 below uses it as a hard
+    # prefer-language gate (only consider catalogues whose language
+    # matches the project's region language). Pass 2 is the unlanguaged
+    # fallback that takes whatever has rows.
 
     try:
         candidates = (
@@ -752,7 +785,7 @@ async def auto_bind_dominant_catalogue(
         row.cost_database_id = region
         return region
 
-    # Pass 1 — prefer same-language catalogues.
+    # Pass 1 — prefer same-language catalogues from SQL.
     if project_lang:
         for region, _count in candidates:
             if not region:
@@ -768,6 +801,75 @@ async def auto_bind_dominant_catalogue(
                 await db.flush()
                 await db.refresh(row)
                 return bound
+
+    # Pass 1b — SQL has no language match but the language-specific
+    # Qdrant collection might still hold rates. Bind to a representative
+    # country code for that language so the matcher reads from the
+    # right collection. ``country_to_collection`` and
+    # ``country_filter_for`` understand bare two-letter codes — see
+    # qdrant_adapter.py for the contract. Pinned to a representative
+    # country per language so the country payload predicate doesn't
+    # over-narrow (US is the most populous English country in CWICR,
+    # CN_SHANGHAI for zh, RU for ru, etc).
+    _LANG_TO_REGION: dict[str, str] = {
+        "en": "US",
+        "zh": "CN_SHANGHAI",
+        "ru": "RU",
+        "vi": "VN",
+        "es": "ES",
+        "de": "DE",
+        "fr": "FR",
+        "pt": "PT",
+        "it": "IT",
+        "ja": "JP",
+        "ko": "KR",
+        "tr": "TR",
+        "pl": "PL",
+        "ar": "AE",
+    }
+    if project_lang:
+        fallback_region = _LANG_TO_REGION.get(project_lang)
+        if fallback_region:
+            try:
+                # Qdrant scroll with country payload — quick check that
+                # the language collection actually carries rows for this
+                # country. Cheap (single call) and only runs in this
+                # cold-bind path.
+                from app.modules.costs.qdrant_adapter import (
+                    _get_client,
+                    country_filter_for,
+                    country_to_collection,
+                )
+
+                client = _get_client()
+                coll = country_to_collection(fallback_region)
+                cf = country_filter_for(fallback_region)
+                try:
+                    info = client.get_collection(coll)
+                except Exception:
+                    base = coll.rsplit("_v", 1)[0] if "_v" in coll else coll
+                    info = client.get_collection(base) if base != coll else None
+                vec_present = bool(
+                    info and (
+                        getattr(info, "points_count", 0)
+                        or getattr(info, "vectors_count", 0)
+                    )
+                )
+                if vec_present:
+                    logger.info(
+                        "auto_bind: SQL has no %s catalogue — binding language "
+                        "fallback %r so Qdrant %r is searched",
+                        project_lang, fallback_region, coll,
+                    )
+                    bound = _bind(fallback_region)
+                    await db.flush()
+                    await db.refresh(row)
+                    return bound
+                # cf reference keeps the helper imported even when
+                # the collection probe short-circuits.
+                _ = cf
+            except Exception as exc:  # pragma: no cover — defensive
+                logger.debug("auto_bind: language fallback probe failed: %s", exc)
 
     # Pass 2 — fall back to dominant catalogue regardless of language.
     for region, _count in candidates:
