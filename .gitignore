@@ -170,6 +170,7 @@ qa-report/
 # (These can contain commit hashes, ports, and architectural detail
 # useful to someone targeting a specific deploy.)
 .claude/PRD_MODULES_18.md
+.claude/HANDOVER_NEXT_SESSION.md
 .claude/backend.md
 .claude/frontend.md
 .claude/research/
