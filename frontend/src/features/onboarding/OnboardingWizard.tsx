@@ -24,8 +24,10 @@ import {
   Pencil,
   Boxes,
   Settings2,
+  HardHat,
   type LucideIcon,
 } from 'lucide-react';
+import { isCivilCoreDemo } from '@/shared/lib/civilcoreDemo';
 import { Logo, Button, CountryFlag, Badge } from '@/shared/ui';
 import { SUPPORTED_LANGUAGES } from '@/app/i18n';
 import { useToastStore } from '@/stores/useToastStore';
@@ -169,6 +171,7 @@ const AI_PROVIDERS: ProviderOption[] = [
 // ── Company Type Presets ────────────────────────────────────────────────────
 
 type CompanyTypeKey =
+  | 'civil_contractor'
   | 'general_contractor'
   | 'estimator'
   | 'project_management'
@@ -187,11 +190,27 @@ interface CompanyPreset {
 
 const COMPANY_PRESETS: CompanyPreset[] = [
   {
+    key: 'civil_contractor',
+    labelKey: 'onboarding.company_civil_contractor',
+    descriptionKey: 'onboarding.company_civil_contractor_desc',
+    icon: HardHat,
+    popular: true,
+    tags: ['BOQ', 'Takeoff', 'Roads'],
+    enabledModules: [
+      'boq', 'projects', 'costs', 'assemblies', 'catalog', 'templates',
+      'takeoff', 'pdf-takeoff', 'dwg-takeoff', 'data-explorer', 'bim',
+      'schedule', '5d', 'tendering', 'procurement', 'changeorders',
+      'documents', 'photos', 'field-reports', 'safety', 'inspections',
+      'punchlist', 'tasks', 'contacts', 'meetings', 'reports', 'reporting',
+      'analytics', 'validation', 'requirements', 'risks',
+    ],
+  },
+  {
     key: 'general_contractor',
     labelKey: 'onboarding.company_general_contractor',
     descriptionKey: 'onboarding.company_general_contractor_desc',
     icon: Building2,
-    popular: true,
+    popular: !isCivilCoreDemo(),
     tags: ['BOQ', 'Finance', 'Safety'],
     enabledModules: [
       'boq', 'projects', 'costs', 'assemblies', 'catalog', 'templates',
@@ -571,7 +590,7 @@ function StepWelcome({
       </Badge>
 
       <h1 className="text-2xl sm:text-3xl font-bold text-content-primary tracking-tight">
-        {t('onboarding.welcome_title', { defaultValue: 'Welcome to OpenConstructionERP' })}
+        {t('onboarding.welcome_title', { defaultValue: 'Welcome to CivilCore' })}
       </h1>
 
       <p className="mt-2 max-w-md text-sm sm:text-base text-content-secondary leading-relaxed">
@@ -1771,10 +1790,16 @@ export function OnboardingWizard() {
   const { t } = useTranslation();
   const [step, setStep] = useState(0);
   const [selectedLang, setSelectedLang] = useState(() => i18n.language?.split('-')[0] || 'en');
-  const [companyType, setCompanyType] = useState<CompanyTypeKey | null>(null);
-  const [enabledModules, setEnabledModules] = useState<Set<string>>(
-    () => new Set(ALL_MODULES.filter((m) => !m.core).map((m) => m.key)),
+  const [companyType, setCompanyType] = useState<CompanyTypeKey | null>(() =>
+    isCivilCoreDemo() ? 'civil_contractor' : null,
   );
+  const [enabledModules, setEnabledModules] = useState<Set<string>>(() => {
+    if (isCivilCoreDemo()) {
+      const preset = COMPANY_PRESETS.find((p) => p.key === 'civil_contractor');
+      if (preset) return new Set(preset.enabledModules);
+    }
+    return new Set(ALL_MODULES.filter((m) => !m.core).map((m) => m.key));
+  });
 
   // Track whether user chose "Quick Start" (skip profile + modules, go to data)
   const [quickStart, setQuickStart] = useState(false);

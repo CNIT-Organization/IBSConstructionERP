@@ -27,7 +27,8 @@ import {
   CalendarDays, ShieldCheck, BrainCircuit, Boxes,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { Button, Input, Logo, CountryFlag } from '@/shared/ui';
+import { Button, Input, LogoWithText, CountryFlag } from '@/shared/ui';
+import { getAppDisplayName } from '@/shared/lib/appBranding';
 import { useAuthStore } from '@/stores/useAuthStore';
 import { extractErrorMessageFromBody } from '@/shared/lib/api';
 import { AuthBackground } from './AuthBackground';
@@ -556,7 +557,7 @@ export function LoginPageNext() {
             >
               Artem Boiko
             </a>{' '}
-            · OpenConstructionERP
+            · {getAppDisplayName()}
             · <a href="mailto:info@datadrivenconstruction.io" className="hover:text-content-secondary transition-colors">info@datadrivenconstruction.io</a>
           </div>
         </div>
@@ -567,24 +568,12 @@ export function LoginPageNext() {
             <div className="rounded-[24px] p-7 sm:p-9">
               {/* Mobile-only logo */}
               <div className="lg:hidden mb-6 flex flex-col items-center">
-                <Logo size="md" animate />
-                <span
-                  className="mt-2.5 text-xl font-extrabold tracking-[-0.02em] text-content-primary dark:text-white"
-                  style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}
-                >
-                  Open<span className="text-oe-blue">Construction</span><span className="text-content-quaternary font-semibold">ERP</span>
-                </span>
+                <LogoWithText size="md" animate showVersion={false} />
               </div>
 
               {/* Brand row (desktop) */}
-              <div className="hidden lg:flex items-center gap-2.5 mb-7">
-                <Logo size="sm" animate />
-                <span
-                  className="text-[15px] font-extrabold tracking-[-0.02em] text-content-primary dark:text-white"
-                  style={{ fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }}
-                >
-                  Open<span className="text-oe-blue">Construction</span><span className="text-content-quaternary font-semibold dark:text-white/50">ERP</span>
-                </span>
+              <div className="hidden lg:flex items-center mb-7">
+                <LogoWithText size="sm" animate showVersion={false} />
               </div>
 
               {/* Headline */}

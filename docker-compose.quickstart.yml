@@ -66,6 +66,11 @@ services:
       APP_ENV: development
       APP_DEBUG: "false"
       VECTOR_BACKEND: lancedb
+      # CivilCore evaluator profile (override in .env: CIVILCORE_DEMO=false)
+      CIVILCORE_DEMO: ${CIVILCORE_DEMO:-true}
+      DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:-DemoPass1234!}
+      DEMO_ESTIMATOR_PASSWORD: ${DEMO_ESTIMATOR_PASSWORD:-DemoPass1234!}
+      DEMO_MANAGER_PASSWORD: ${DEMO_MANAGER_PASSWORD:-DemoPass1234!}
     volumes:
       - app_data:/data
     healthcheck:

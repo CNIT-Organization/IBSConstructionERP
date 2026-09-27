@@ -600,6 +600,19 @@ async def _seed_demo_account() -> None:
                 for email, pw in generated_creds.items():
                     logger.warning("  %s: %s", email, pw)
 
+            # Persist credentials before demo projects — a project seed failure
+            # must not roll back the user rows (PostgreSQL demo data bug #changeorders).
+            await session.commit()
+
+            if demo is None:
+                demo = (
+                    await session.execute(
+                        select(User).where(User.email == "demo@openestimator.io")
+                    )
+                ).scalar_one_or_none()
+            if demo is None:
+                return
+
             # 2. Install 5 demo projects if user has none
             count = (
                 await session.execute(select(func.count()).select_from(Project).where(Project.owner_id == demo.id))
@@ -630,6 +643,7 @@ async def _seed_demo_account() -> None:
                         )
                     except Exception:
                         logger.warning("Failed to install demo %s (skipping)", demo_id)
+                        await session.rollback()
 
             await session.commit()
     except Exception:
@@ -942,6 +956,7 @@ def create_app() -> FastAPI:
             "build": f"DDC-{_BUILD_HASH}",
             "modules_loaded": len(module_loader.list_modules()),
             "uptime_seconds": int(time.time() - _startup_time),
+            "civilcore_demo": settings.civilcore_demo,
         }
 
         # Database connectivity (fast ping)

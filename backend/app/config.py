@@ -95,7 +95,7 @@ class Settings(BaseSettings):
     )
 
     # ── App ──────────────────────────────────────────────────────────────
-    app_name: str = "OpenConstructionERP"
+    app_name: str = "CivilCore"
     app_version: str = Field(default_factory=_detect_version)
     app_env: Literal["development", "staging", "production"] = "development"
     app_debug: bool = True
@@ -158,6 +158,10 @@ class Settings(BaseSettings):
     # without chicken-and-egg. Self-hosters who explicitly want open
     # registration can set ``OE_REGISTRATION_MODE=open`` in their .env.
     registration_mode: Literal["open", "email-verify", "admin-approve", "closed"] = "admin-approve"
+
+    # CivilCore evaluator demo: hide AI-heavy UX in the frontend (nav only;
+    # backend modules remain loaded). Set CIVILCORE_DEMO=true in .env.
+    civilcore_demo: bool = False
 
     # ── AI / Vector ──────────────────────────────────────────────────────
     # Default: Qdrant (CWICR v3 pipeline — BAAI/bge-m3 + 30 per-language

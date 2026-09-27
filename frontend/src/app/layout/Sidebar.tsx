@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { Logo, LogoWithText } from '@/shared/ui';
+import { getAppDisplayName, getGithubRepoUrl } from '@/shared/lib/appBranding';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import {
@@ -85,6 +86,7 @@ import {
   SIDEBAR_WIDTH_ICON,
 } from '@/stores/useSidebarCollapseStore';
 import { RequestCustomModuleDialog } from '@/features/modules/RequestCustomModuleDialog';
+import { isCivilCoreDemo, isRouteHiddenInCivilCoreDemo } from '@/shared/lib/civilcoreDemo';
 
 
 interface NavItem {
@@ -452,7 +454,9 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { isModuleEnabled } = useModuleStore();
+  const civilCoreDemo = useModuleStore((s) => s.civilCoreDemo);
   const isAdvanced = useViewModeStore((s) => s.isAdvanced);
+  const hideAiNav = civilCoreDemo || isCivilCoreDemo();
   const badgeCounts = useSidebarBadges();
   const openSearch = useGlobalSearchStore((s) => s.openModal);
   const iconified = useSidebarCollapseStore((s) => s.iconified);
@@ -585,7 +589,8 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
   // pinned earlier has been disabled).
   const pinnedItems: NavItem[] = pinned
     .map((route) => ALL_NAV_ITEMS[route])
-    .filter((item): item is NavItem => Boolean(item));
+    .filter((item): item is NavItem => Boolean(item))
+    .filter((item) => !hideAiNav || !isRouteHiddenInCivilCoreDemo(item.to.split('?')[0] ?? item.to));
 
   // Pick a single winning route for highlighting. Without this, both
   // `/bim` (parent) and `/bim/rules` (child) would render as "active"
@@ -652,11 +657,11 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
         )}
       >
         <a
-          href="https://openconstructionerp.com/?utm_source=app"
+          href={getGithubRepoUrl()}
           target="_blank"
           rel="noopener noreferrer"
           className="hover:opacity-80 transition-opacity"
-          title={iconified ? 'OpenConstructionERP' : undefined}
+          title={iconified ? getAppDisplayName() : undefined}
         >
           {iconified ? <Logo size="sm" /> : <LogoWithText size="xs" />}
         </a>
@@ -811,6 +816,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
           </div>
         )}
         {navGroups.map((group) => {
+          if (hideAiNav && group.id === 'ai') return null;
           // Hide entire group in simple mode if flagged
           if (group.hideInSimple && !isAdvanced) return null;
 
@@ -832,6 +838,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
           const allItems = [...group.items, ...dynamicItems];
           const visibleItems = allItems.filter(
             (item) =>
+              (!hideAiNav || !isRouteHiddenInCivilCoreDemo(item.to.split('?')[0] ?? item.to)) &&
               (!item.moduleKey || isModuleEnabled(item.moduleKey)) &&
               (!item.advancedOnly || isAdvanced),
           );
@@ -1004,7 +1011,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
           // users see only one toggle entry-point — no duplicate UI.
           <div className="pt-2 pb-1 flex flex-col items-center gap-1">
             <a
-              href="https://github.com/datadrivenconstruction/OpenConstructionERP"
+              href={getGithubRepoUrl()}
               target="_blank"
               rel="noopener noreferrer"
               title={`GitHub repository (v${APP_VERSION})`}
@@ -1030,7 +1037,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
           <div className="px-2 pb-2 pt-1 flex flex-col gap-1.5">
             <div className="flex items-center gap-1.5">
               <a
-                href="https://github.com/datadrivenconstruction/OpenConstructionERP"
+                href={getGithubRepoUrl()}
                 target="_blank"
                 rel="noopener noreferrer"
                 title="GitHub repository"
@@ -1394,6 +1401,9 @@ export function FloatingRecentButton() {
 export function FloatingChatButton() {
   const { t } = useTranslation();
   const location = useLocation();
+  const civilCoreDemo = useModuleStore((s) => s.civilCoreDemo);
+
+  if (civilCoreDemo || isCivilCoreDemo()) return null;
 
   // Hide when already on the chat page so it doesn't overlap the chat itself
   if (location.pathname.startsWith('/chat')) return null;

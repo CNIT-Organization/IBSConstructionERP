@@ -1,11 +1,14 @@
 """‌⁠‍Demo project templates that can be installed from the marketplace.
 
-Provides 5 complete demo projects with BOQ, Schedule, Budget, and Tendering data:
-  1. residential-berlin  — Wohnanlage Berlin-Mitte (existing seed, re-created)
-  2. office-london       — One Canary Square (existing seed, re-created)
-  3. medical-us          — Downtown Medical Center (new)
-  4. warehouse-dubai     — Logistics Hub Jebel Ali (new)
-  5. school-paris        — Ecole Primaire Belleville (new)
+Provides 5 complete demo projects with BOQ, Schedule, Budget, and Tendering data.
+Fresh-install auto-seed (``DEFAULT_DEMO_IDS``) uses CivilCore India + Global names;
+internal ``demo_id`` keys are stable for idempotent seed and keyed fixture data.
+
+  1. residential-berlin  — NH-48 Road Rehabilitation (Maharashtra) [IN / INR]
+  2. office-london       — Residential Development (Manchester) [UK / GBP]
+  3. medical-us          — Commercial Office Building (Texas) [US / USD]
+  4. warehouse-dubai     — Municipal Drainage Package (Pune) [IN / INR]
+  5. school-paris        — Legacy education template (marketplace install only)
 """
 
 from __future__ import annotations
@@ -218,17 +221,17 @@ class DemoTemplate:
 
 _BERLIN = DemoTemplate(
     demo_id="residential-berlin",
-    project_name="Wohnanlage Berlin-Mitte",
+    project_name="NH-48 Road Rehabilitation (Maharashtra)",
     project_description=(
-        "Neubau einer Wohnanlage mit 48 Wohneinheiten, 3 Treppenhaeuser, "
-        "Tiefgarage mit 60 Stellplaetzen. 5 Geschosse + Staffelgeschoss. "
-        "Grundstueck ca. 4.200 m2, BGF ca. 7.840 m2. "
-        "KfW Effizienzhaus 55. Baukosten ca. 12 Mio EUR."
+        "Four-lane NH-48 corridor rehabilitation: milling and overlay, "
+        "shoulder reconstruction, drainage upgrades, and safety barriers. "
+        "Chainage approx. 18 km (Pune–Satara section). "
+        "Estimated construction cost INR 980 Cr (demo BOQ uses metric quantities)."
     ),
-    region="DACH",
+    region="HI_MUMBAI",
     classification_standard="din276",
-    currency="EUR",
-    locale="de",
+    currency="INR",
+    locale="en-IN",
     validation_rule_sets=["din276", "gaeb", "boq_quality"],
     boq_name="Kostenberechnung nach DIN 276",
     boq_description="Detaillierte Kostenberechnung gem. DIN 276, alle Kostengruppen 300-540",
@@ -718,12 +721,12 @@ _BERLIN = DemoTemplate(
 
 _LONDON = DemoTemplate(
     demo_id="office-london",
-    project_name="One Canary Square",
+    project_name="Residential Development (Manchester)",
     project_description=(
-        "New-build 12-storey Grade A office tower with 2-level basement car park. "
-        "Steel frame, composite floors, unitised curtain walling. "
-        "GIA 16,400 m\u00b2 (shell & core), NIA 12,800 m\u00b2. "
-        "BREEAM Excellent target. Estimated construction cost \u00a345M."
+        "Mixed residential scheme: 186 apartments across three blocks with "
+        "underground parking, communal amenity, and landscape works. "
+        "GIA approx. 14,200 m\u00b2. NRM elemental cost plan (demo). "
+        "Estimated construction cost \u00a338M."
     ),
     region="UK",
     classification_standard="nrm",
@@ -868,14 +871,12 @@ _LONDON = DemoTemplate(
         ("Mace Group", "proc@mace.com", 1.01),
     ],
     project_metadata={
-        "address": "Canary Wharf, London E14",
-        "client": "Canary Wharf Group plc",
-        "architect": "Foster + Partners",
-        "gia_m2": 16400,
-        "nia_m2": 12800,
-        "storeys": 12,
-        "basement_levels": 2,
-        "breeam_target": "Excellent",
+        "address": "Salford Quays / Manchester, UK",
+        "client": "Northern Residential Developments Ltd (demo)",
+        "architect": "Studio Manchester (demo)",
+        "gia_m2": 14200,
+        "units": 186,
+        "storeys": 10,
         "procurement": "Design & Build",
     },
 )
@@ -886,10 +887,11 @@ _LONDON = DemoTemplate(
 
 _US_MEDICAL = DemoTemplate(
     demo_id="medical-us",
-    project_name="Downtown Medical Center",
+    project_name="Commercial Office Building (Texas)",
     project_description=(
-        "New 200-bed medical center with emergency department, surgical suites, "
-        "and diagnostic imaging. 5-story steel frame with concrete podium."
+        "New 8-storey Class A office building in Austin metro: steel frame, "
+        "curtain wall, structured parking, and core MEP fit-out (demo uses "
+        "healthcare BOQ divisions as a rich MasterFormat sample)."
     ),
     region="United States",
     classification_standard="masterformat",
@@ -1106,17 +1108,17 @@ _US_MEDICAL = DemoTemplate(
 
 _DUBAI = DemoTemplate(
     demo_id="warehouse-dubai",
-    project_name="Logistics Hub Jebel Ali",
+    project_name="Municipal Drainage Package (Pune)",
     project_description=(
-        "New-build logistics warehouse with 45,000 m\u00b2 GFA, 12m clear height, "
-        "8 loading docks, cold storage zone, automated high-bay racking. "
-        "LEED Silver target. Fire suppression ESFR. "
-        "Estimated construction cost 15M AED."
+        "Urban stormwater and drainage upgrade: RCC culverts, box drains, "
+        "manholes, pump house, and outfall to Mula-Mutha basin. "
+        "PMC infrastructure package (demo quantities). "
+        "Estimated construction cost INR 145 Cr."
     ),
-    region="Middle East",
+    region="HI_MUMBAI",
     classification_standard="masterformat",
-    currency="AED",
-    locale="en",
+    currency="INR",
+    locale="en-IN",
     validation_rule_sets=["masterformat", "boq_quality"],
     boq_name="Cost Estimate \u2014 Logistics Warehouse",
     boq_description="Detailed cost estimate for Jebel Ali logistics facility",
@@ -1218,13 +1220,11 @@ _DUBAI = DemoTemplate(
         ("Al Habtoor Leighton", "procurement@hlg.ae", 1.02),
     ],
     project_metadata={
-        "address": "Jebel Ali Free Zone, Dubai, UAE",
-        "client": "DP World Logistics",
-        "architect": "Khatib & Alami",
-        "gfa_m2": 45000,
-        "clear_height_m": 12,
-        "loading_docks": 8,
-        "leed_target": "Silver",
+        "address": "Pune Municipal Corporation — Mula-Mutha basin, Maharashtra, IN",
+        "client": "Pune Municipal Corporation",
+        "architect": "PMC Infrastructure Cell (demo)",
+        "package_type": "stormwater_drainage",
+        "corridor_km": 18,
     },
 )
 
@@ -1918,58 +1918,58 @@ DEMO_TEMPLATES: dict[str, DemoTemplate] = {t.demo_id: t for t in [_BERLIN, _LOND
 # POST /api/demo/install/office-london, but it isn't auto-seeded because
 # operators consistently asked us to drop it from the default workspace.
 DEFAULT_DEMO_IDS: tuple[str, ...] = (
-    "residential-berlin",  # residential — DACH DIN 276, EUR
-    "warehouse-dubai",     # industrial / infrastructure — AED
-    "school-paris",        # small renovation / education fit-out — FR EUR
-    "medical-us",          # international healthcare — US MasterFormat, USD
+    "residential-berlin",  # India roads — NH-48 Maharashtra, INR / HI_MUMBAI
+    "warehouse-dubai",     # India infrastructure — Municipal drainage Pune, INR
+    "office-london",       # Global UK — Residential Manchester, GBP
+    "medical-us",          # Global US — Commercial office Texas, USD
 )
 
 # Catalog info for the marketplace / frontend
 DEMO_CATALOG: list[dict] = [
     {
         "demo_id": "residential-berlin",
-        "name": "Residential Complex Berlin",
-        "description": "48-unit residential complex, DIN 276, 13 sections, 120 positions, 22-month schedule",
-        "country": "DE",
-        "currency": "EUR",
-        "budget": "\u20ac12M",
-        "type": "Residential",
+        "name": "NH-48 Road Rehabilitation (Maharashtra)",
+        "description": "Highway rehabilitation demo, metric quantities, 13 sections, 120 positions, 22-month schedule",
+        "country": "IN",
+        "currency": "INR",
+        "budget": "INR 980 Cr",
+        "type": "Roads / Infrastructure",
         "sections": 13,
         "positions": 120,
     },
     {
         "demo_id": "office-london",
-        "name": "Office Tower London",
-        "description": "12-storey Grade A office, NRM 1, 10 sections, 41 positions, 24-month schedule",
+        "name": "Residential Development (Manchester)",
+        "description": "UK residential scheme, NRM 1, 10 sections, 41 positions, 24-month schedule",
         "country": "GB",
         "currency": "GBP",
-        "budget": "\u00a345M",
-        "type": "Commercial",
+        "budget": "\u00a338M",
+        "type": "Residential",
         "sections": 10,
         "positions": 41,
     },
     {
         "demo_id": "medical-us",
-        "name": "Downtown Medical Center",
+        "name": "Commercial Office Building (Texas)",
         "description": (
-            "200-bed hospital with ED, surgical suites, diagnostic imaging."
-            " 5-story steel frame. MasterFormat classification with full MEP systems."
+            "Class A office shell & core, MasterFormat BOQ sample "
+            "(rich MEP divisions from healthcare template)."
         ),
         "country": "US",
         "currency": "USD",
         "budget": "$25M",
-        "type": "Healthcare",
+        "type": "Commercial",
         "sections": 12,
         "positions": 38,
     },
     {
         "demo_id": "warehouse-dubai",
-        "name": "Logistics Warehouse Dubai",
-        "description": "45,000 m\u00b2 logistics warehouse, high-bay racking, cold storage, 12-month schedule",
-        "country": "AE",
-        "currency": "AED",
-        "budget": "15M AED",
-        "type": "Industrial",
+        "name": "Municipal Drainage Package (Pune)",
+        "description": "Stormwater and drainage infrastructure, civil works, 12-month schedule",
+        "country": "IN",
+        "currency": "INR",
+        "budget": "INR 145 Cr",
+        "type": "Infrastructure",
         "sections": 6,
         "positions": 25,
     },

@@ -8,6 +8,7 @@ import { BOQListPage, CreateBOQPage, TemplatesPage } from '@/features/boq';
 import { syncCustomUnitsFromServer } from '@/features/boq/boqHelpers';
 import { CostsPage, ImportDatabasePage } from '@/features/costs';
 import { OnboardingWizard } from '@/features/onboarding';
+import { getBuildAttributionLine } from '@/shared/lib/appBranding';
 import { AssembliesPage, AssemblyEditorPage, CreateAssemblyPage } from '@/features/assemblies';
 import { ValidationPage } from '@/features/validation';
 import { NlRuleBuilderPanel } from '@/features/compliance';
@@ -30,6 +31,8 @@ import { useKeyboardShortcuts } from '@/shared/hooks/useKeyboardShortcuts';
 import { useTranslation } from 'react-i18next';
 import { getLanguageByCode } from './i18n';
 import { initErrorLogger } from '@/shared/lib/errorLogger';
+import { syncCivilCoreDemoFromHealth } from '@/shared/lib/civilcoreDemo';
+import { useModuleStore } from '@/stores/useModuleStore';
 
 // Lazy-loaded heavy pages — code-split into separate chunks
 const BOQEditorPage = lazy(() =>
@@ -407,7 +410,14 @@ function useDocumentDirection() {
 
 export default function App() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const setCivilCoreDemo = useModuleStore((s) => s.setCivilCoreDemo);
   useDocumentDirection();
+
+  useEffect(() => {
+    void syncCivilCoreDemoFromHealth().then((enabled) => {
+      if (enabled) setCivilCoreDemo(true);
+    });
+  }, [setCivilCoreDemo]);
 
   // DDC-CWICR-OE integrity verification
   if (typeof window !== 'undefined') {
@@ -633,7 +643,7 @@ export default function App() {
       {/* DDC-CWICR-OE */}
       <span aria-hidden="true" style={{ position: 'absolute', width: 0, height: 0, overflow: 'hidden' }}>
         {'\u200B\u200C\u200D\u200B\u200C\u200D\u200B'}
-        DataDrivenConstruction·CWICR·OpenConstructionERP·2026
+        {getBuildAttributionLine()}
       </span>
     </Suspense>
   );

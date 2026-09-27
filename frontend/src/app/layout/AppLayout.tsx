@@ -19,6 +19,7 @@ import {
 import { useSwipeGesture, useEdgeSwipe } from '@/shared/hooks/useSwipeGesture';
 import { useIsRTL } from '@/shared/hooks/useIsRTL';
 import { useOfflineSync } from '@/shared/hooks/useOnlineStatus';
+import { getAppDisplayName } from '@/shared/lib/appBranding';
 
 interface AppLayoutProps {
   title?: string;
@@ -36,7 +37,8 @@ export function AppLayout({ title, children }: AppLayoutProps) {
   const openSidebar = useCallback(() => setSidebarOpen(true), []);
 
   useEffect(() => {
-    document.title = title ? `${title} | OpenConstructionERP` : 'OpenConstructionERP';
+    const appName = getAppDisplayName();
+    document.title = title ? `${title} | ${appName}` : appName;
   }, [title]);
 
   // Lock body scroll when mobile sidebar is open

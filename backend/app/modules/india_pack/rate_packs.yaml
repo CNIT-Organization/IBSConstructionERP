@@ -1,0 +1,19 @@
+# Configurable India rate-pack manifests (no embedded rates in Python).
+# Phase 1 stub: PWD Delhi DSR placeholder — wire CSV/parquet under data/catalog/regions/
+# when official schedule data is licensed or supplied by the operator.
+
+rate_packs:
+  - id: PWD_DELHI_DSR
+    name: PWD Delhi — Schedule of Rates (DSR)
+    authority: Public Works Department, Government of NCT of Delhi
+    status: placeholder
+    description: >
+      Delhi Schedule of Rates reference pack. Rates are loaded from external
+      catalog files, not hard-coded in oe_india_pack or oe_boq core.
+    # Expected data layout (empty until operator imports):
+    catalog_manifest: null
+    catalog_glob: data/catalog/regions/PWD_DELHI_DSR_*.csv
+    fallback_cwicr_region: HI_MUMBAI
+    notes: |
+      Use CWICR HI_MUMBAI for demo unit rates until a Delhi DSR CSV is added.
+      See PACK_CONFIG["configurable_rate_packs"] in config.py for API exposure.
