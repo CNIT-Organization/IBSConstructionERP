@@ -32,6 +32,8 @@ DEMO_EMAILS: tuple[str, ...] = (
     "demo@openestimator.io",
     "estimator@openestimator.io",
     "manager@openestimator.io",
+    "planning@openestimator.io",
+    "engineer@openestimator.io",
 )
 
 # Hostnames that look like dev/staging/qa. A hostname not in this list is

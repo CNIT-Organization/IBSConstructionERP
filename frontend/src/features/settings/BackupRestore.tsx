@@ -6,6 +6,7 @@
  */
 
 import { useState, useRef, useCallback } from 'react';
+import { getAppDisplayName } from '@/shared/lib/appBranding';
 import { useTranslation } from 'react-i18next';
 import {
   Download,
@@ -121,7 +122,8 @@ export function BackupRestore() {
       const blob = await exportBackup();
       const now = new Date();
       const dateStr = now.toISOString().slice(0, 10);
-      const filename = `openconstructionerp-backup-${dateStr}.zip`;
+      const slug = getAppDisplayName().replace(/\s+/g, '-').toLowerCase();
+      const filename = `${slug}-backup-${dateStr}.zip`;
 
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');

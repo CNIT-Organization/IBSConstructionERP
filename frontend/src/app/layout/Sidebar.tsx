@@ -85,6 +85,12 @@ import {
   SIDEBAR_WIDTH_ICON,
 } from '@/stores/useSidebarCollapseStore';
 import { RequestCustomModuleDialog } from '@/features/modules/RequestCustomModuleDialog';
+import {
+  isCivilCoreDemo,
+  isRouteHiddenInCivilCoreDemo,
+  isRouteAllowedInPwdDemo,
+} from '@/shared/lib/civilcoreDemo';
+import { getAppDisplayName, getAppDisplayNameHi, getAppShortName, getGithubRepoUrl } from '@/shared/lib/appBranding';
 
 
 interface NavItem {
@@ -312,6 +318,21 @@ const bottomNav: NavItem[] = [
   { labelKey: 'nav.about', to: '/about', icon: Info },
 ];
 
+/** PWD Delhi Phase A — flat allowlist nav (gov chrome; no marketplace groups). */
+const PWD_DELHI_NAV: NavItem[] = [
+  { labelKey: 'nav.dashboard', to: '/', icon: LayoutDashboard },
+  { labelKey: 'projects.title', to: '/projects', icon: FolderOpen, tourId: 'projects' },
+  { labelKey: 'nav.estimates', to: '/estimates', icon: Table2, tourId: 'boq' },
+  { labelKey: 'nav.cost_dsr', to: '/costs', icon: Database, tourId: 'costs' },
+  { labelKey: 'nav.takeoff', to: '/takeoff', icon: Ruler },
+  { labelKey: 'nav.reports', to: '/reports', icon: FileBarChart },
+];
+
+const PWD_DELHI_BOTTOM_NAV: NavItem[] = [
+  { labelKey: 'nav.settings', to: '/settings', icon: Settings },
+];
+
+
 /** Flat lookup of every NavItem in the sidebar, keyed by `to`. The
  *  Pinned section uses this to resolve a stored route string into a
  *  full NavItem (with icon, labelKey, badge etc.) without duplicating
@@ -320,6 +341,8 @@ const ALL_NAV_ITEMS: Record<string, NavItem> = (() => {
   const map: Record<string, NavItem> = {};
   for (const group of navGroups) for (const item of group.items) map[item.to] = item;
   for (const item of bottomNav) map[item.to] = item;
+  for (const item of PWD_DELHI_NAV) map[item.to] = item;
+  for (const item of PWD_DELHI_BOTTOM_NAV) map[item.to] = item;
   return map;
 })();
 
@@ -452,7 +475,9 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { isModuleEnabled } = useModuleStore();
+  const civilCoreDemo = useModuleStore((s) => s.civilCoreDemo);
   const isAdvanced = useViewModeStore((s) => s.isAdvanced);
+  const hideAiNav = civilCoreDemo || isCivilCoreDemo();
   const badgeCounts = useSidebarBadges();
   const openSearch = useGlobalSearchStore((s) => s.openModal);
   const iconified = useSidebarCollapseStore((s) => s.iconified);
@@ -585,7 +610,8 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
   // pinned earlier has been disabled).
   const pinnedItems: NavItem[] = pinned
     .map((route) => ALL_NAV_ITEMS[route])
-    .filter((item): item is NavItem => Boolean(item));
+    .filter((item): item is NavItem => Boolean(item))
+    .filter((item) => !hideAiNav || isRouteAllowedInPwdDemo(item.to.split('?')[0] ?? item.to));
 
   // Pick a single winning route for highlighting. Without this, both
   // `/bim` (parent) and `/bim/rules` (child) would render as "active"
@@ -652,13 +678,31 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
         )}
       >
         <a
-          href="https://openconstructionerp.com/?utm_source=app"
+          href={getGithubRepoUrl()}
           target="_blank"
           rel="noopener noreferrer"
           className="hover:opacity-80 transition-opacity"
-          title={iconified ? 'OpenConstructionERP' : undefined}
+          title={iconified ? getAppDisplayName() : undefined}
         >
-          {iconified ? <Logo size="sm" /> : <LogoWithText size="xs" />}
+          {iconified ? (
+            <Logo size="sm" />
+          ) : hideAiNav ? (
+            <div className="flex items-center gap-2 min-w-0">
+              <Logo size="xs" />
+              <div className="min-w-0 leading-tight">
+                <div className="text-[13px] font-extrabold text-[#0B3A6E] truncate tracking-tight">
+                  {getAppShortName()}
+                </div>
+                {getAppDisplayNameHi() ? (
+                  <div className="text-[10px] text-content-tertiary truncate font-medium">
+                    {getAppDisplayNameHi()}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : (
+            <LogoWithText size="xs" />
+          )}
         </a>
         {!iconified && onClose && (
           <button
@@ -810,7 +854,39 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
             )}
           </div>
         )}
-        {navGroups.map((group) => {
+        {hideAiNav ? (
+          <ul className="space-y-0.5 px-1">
+            {PWD_DELHI_NAV.map((item, i) => (
+              <li
+                key={item.to}
+                className="oe-stagger"
+                style={{ animationDelay: `${i * 18}ms` }}
+              >
+                <SidebarItem
+                  item={item}
+                  label={
+                    item.labelKey === 'nav.estimates'
+                      ? t('nav.estimates', { defaultValue: 'Estimates (PE/DE)' })
+                      : item.labelKey === 'nav.cost_dsr'
+                        ? t('nav.cost_dsr', { defaultValue: 'Cost / DSR rates' })
+                        : item.labelKey === 'nav.takeoff'
+                          ? t('nav.takeoff', { defaultValue: 'Takeoff' })
+                          : item.labelKey === 'nav.reports'
+                            ? t('nav.reports', { defaultValue: 'Reports' })
+                            : t(item.labelKey)
+                  }
+                  onClick={onClose}
+                  badge={badgeMap[item.to]}
+                  isPinned={pinned.includes(item.to)}
+                  onTogglePin={togglePin}
+                  activeRoute={activeRoute}
+                  iconified={iconified}
+                />
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {!hideAiNav && navGroups.map((group) => {
           // Hide entire group in simple mode if flagged
           if (group.hideInSimple && !isAdvanced) return null;
 
@@ -832,6 +908,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
           const allItems = [...group.items, ...dynamicItems];
           const visibleItems = allItems.filter(
             (item) =>
+              (!hideAiNav || !isRouteHiddenInCivilCoreDemo(item.to.split('?')[0] ?? item.to)) &&
               (!item.moduleKey || isModuleEnabled(item.moduleKey)) &&
               (!item.advancedOnly || isAdvanced),
           );
@@ -872,6 +949,8 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
             </NavGroupSection>
           );
         })}
+{!hideAiNav && (
+          <>
         {/* Add-a-module CTA — dashed-border tile with a plus icon. Sits at
              the very end of the main nav groups so it reads as "keep going,
              there's more — build your own". Navigates into the in-app
@@ -954,6 +1033,8 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
             )}
           </button>
         </li>
+          </>
+        )}
       </nav>
 
       {/* Bottom navigation — soft hairline separator instead of a hard
@@ -971,7 +1052,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
           )}
         />
         <ul className="space-y-0.5">
-          {bottomNav.map((item) => (
+          {(hideAiNav ? PWD_DELHI_BOTTOM_NAV : bottomNav).map((item) => (
             <li key={item.to}>
               <SidebarItem
                 item={item}
@@ -1004,7 +1085,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
           // users see only one toggle entry-point — no duplicate UI.
           <div className="pt-2 pb-1 flex flex-col items-center gap-1">
             <a
-              href="https://github.com/datadrivenconstruction/OpenConstructionERP"
+              href={getGithubRepoUrl()}
               target="_blank"
               rel="noopener noreferrer"
               title={`GitHub repository (v${APP_VERSION})`}
@@ -1030,7 +1111,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
           <div className="px-2 pb-2 pt-1 flex flex-col gap-1.5">
             <div className="flex items-center gap-1.5">
               <a
-                href="https://github.com/datadrivenconstruction/OpenConstructionERP"
+                href={getGithubRepoUrl()}
                 target="_blank"
                 rel="noopener noreferrer"
                 title="GitHub repository"
@@ -1394,6 +1475,9 @@ export function FloatingRecentButton() {
 export function FloatingChatButton() {
   const { t } = useTranslation();
   const location = useLocation();
+  const civilCoreDemo = useModuleStore((s) => s.civilCoreDemo);
+
+  if (civilCoreDemo || isCivilCoreDemo()) return null;
 
   // Hide when already on the chat page so it doesn't overlap the chat itself
   if (location.pathname.startsWith('/chat')) return null;

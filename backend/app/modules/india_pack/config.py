@@ -1,6 +1,26 @@
 """‌⁠‍Regional configuration for India."""
 
+from pathlib import Path
 from typing import Any
+
+_RATE_PACKS_PATH = Path(__file__).resolve().parent / "rate_packs.yaml"
+
+
+def _load_rate_pack_manifest() -> list[dict[str, Any]]:
+    """Load configurable SOR/DSR pack stubs (YAML only — no rates in code)."""
+    if not _RATE_PACKS_PATH.is_file():
+        return []
+    try:
+        import yaml
+    except ImportError:
+        return []
+    try:
+        raw = yaml.safe_load(_RATE_PACKS_PATH.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return []
+    packs = raw.get("rate_packs")
+    return packs if isinstance(packs, list) else []
+
 
 PACK_CONFIG: dict[str, Any] = {
     # ── Identity ─────────────────────────────────────────────────────────────
@@ -216,4 +236,6 @@ PACK_CONFIG: dict[str, Any] = {
         "weight": "kg",
         "temperature": "°C",
     },
+    # Configurable rate packs (PWD Delhi DSR stub — see rate_packs.yaml)
+    "configurable_rate_packs": _load_rate_pack_manifest(),
 }

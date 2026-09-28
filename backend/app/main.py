@@ -489,10 +489,13 @@ async def _seed_demo_account() -> None:
     * demo@openestimator.io        (role=admin — full walkthrough)
     * estimator@openestimator.io   (role=estimator)
     * manager@openestimator.io     (role=manager)
+    * planning@openestimator.io    (role=planning — PWD Delhi PE wing)
+    * engineer@openestimator.io    (role=engineer — PWD Delhi DE wing)
 
     Each password is read from the environment if set
     (``DEMO_USER_PASSWORD``, ``DEMO_ESTIMATOR_PASSWORD``,
-    ``DEMO_MANAGER_PASSWORD``), otherwise generated per-installation via
+    ``DEMO_MANAGER_PASSWORD``, ``DEMO_PLANNING_PASSWORD``,
+    ``DEMO_ENGINEER_PASSWORD``), otherwise generated per-installation via
     ``secrets.token_urlsafe(16)``. Generated values are written to
     ``~/.openestimator/.demo_credentials.json`` (chmod 600) and printed
     once to the startup log. Operators who want a stable password for
@@ -530,6 +533,18 @@ async def _seed_demo_account() -> None:
             "env_var": "DEMO_MANAGER_PASSWORD",
             "full_name": "Thomas Müller",
             "role": "manager",
+        },
+        {
+            "email": "planning@openestimator.io",
+            "env_var": "DEMO_PLANNING_PASSWORD",
+            "full_name": "PWD Planning Wing",
+            "role": "planning",
+        },
+        {
+            "email": "engineer@openestimator.io",
+            "env_var": "DEMO_ENGINEER_PASSWORD",
+            "full_name": "PWD Engineer Wing",
+            "role": "engineer",
         },
     ]
 
@@ -590,7 +605,8 @@ async def _seed_demo_account() -> None:
                     "Demo credentials generated for %d account(s). "
                     "Saved to %s — recover the passwords from there or "
                     "set DEMO_USER_PASSWORD / DEMO_ESTIMATOR_PASSWORD / "
-                    "DEMO_MANAGER_PASSWORD before next boot to override.",
+                    "DEMO_MANAGER_PASSWORD / DEMO_PLANNING_PASSWORD / "
+                    "DEMO_ENGINEER_PASSWORD before next boot to override.",
                     len(generated_creds),
                     creds_path or "(persistence failed — check logs)",
                 )
@@ -599,6 +615,19 @@ async def _seed_demo_account() -> None:
                 # row already present and skip this branch entirely.
                 for email, pw in generated_creds.items():
                     logger.warning("  %s: %s", email, pw)
+
+            # Persist credentials before demo projects — a project seed failure
+            # must not roll back the user rows (PostgreSQL demo data bug #changeorders).
+            await session.commit()
+
+            if demo is None:
+                demo = (
+                    await session.execute(
+                        select(User).where(User.email == "demo@openestimator.io")
+                    )
+                ).scalar_one_or_none()
+            if demo is None:
+                return
 
             # 2. Install 5 demo projects if user has none
             count = (
@@ -630,6 +659,7 @@ async def _seed_demo_account() -> None:
                         )
                     except Exception:
                         logger.warning("Failed to install demo %s (skipping)", demo_id)
+                        await session.rollback()
 
             await session.commit()
     except Exception:
@@ -942,6 +972,7 @@ def create_app() -> FastAPI:
             "build": f"DDC-{_BUILD_HASH}",
             "modules_loaded": len(module_loader.list_modules()),
             "uptime_seconds": int(time.time() - _startup_time),
+            "civilcore_demo": settings.civilcore_demo,
         }
 
         # Database connectivity (fast ping)

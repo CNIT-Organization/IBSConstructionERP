@@ -6,6 +6,9 @@ import App from './app/App';
 import { useToastStore } from '@/stores/useToastStore';
 import './app/i18n';
 import './index.css';
+import { applyPwdDelhiThemeClass } from '@/shared/lib/civilcoreDemo';
+
+applyPwdDelhiThemeClass();
 
 const queryClient = new QueryClient({
   defaultOptions: {

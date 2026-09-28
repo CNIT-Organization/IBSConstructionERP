@@ -2537,8 +2537,21 @@ async def import_cost_file(
 
 # ── Load CWICR database from local DDC Toolkit ──────────────────────────────
 
-# GitHub repository info for downloading CWICR parquet files
+# GitHub repository info for downloading CWICR parquet files (legacy layout;
+# upstream moved tabular parquets to HuggingFace — see _HF_CWICR_PARQUET_*).
 _GITHUB_CWICR_BASE_URL = "https://github.com/datadrivenconstruction/OpenConstructionEstimate-DDC-CWICR/raw/main"
+
+_HF_CWICR_PARQUET_DATASET = "DataDrivenConstruction/cwicr-construction-rates"
+_HF_CWICR_PARQUET_BASE_URL = (
+    f"https://huggingface.co/datasets/{_HF_CWICR_PARQUET_DATASET}/resolve/main"
+)
+
+
+def _cwicr_hf_parquet_relpath(legacy_github_relative: str) -> str:
+    """``DE___DDC_CWICR/DE_BERLIN_….parquet`` → ``DE/DE_BERLIN_….parquet``."""
+    folder, filename = legacy_github_relative.split("/", 1)
+    lang = folder.split("___", 1)[0]
+    return f"{lang}/{filename}"
 
 # Mapping from db_id to the GitHub folder/filename structure
 _GITHUB_CWICR_FILES: dict[str, str] = {
@@ -2623,7 +2636,7 @@ _LAST_DOWNLOAD_ERROR: dict[str, str] = {}
 
 
 def _download_cwicr_from_github_sync(db_id: str) -> Path | None:
-    """Download a CWICR parquet file from GitHub if available (sync version).
+    """Download a CWICR parquet (HuggingFace primary, GitHub legacy fallback).
 
     Downloads to ~/.openestimator/cache/{db_id}.parquet.
     Returns the local path on success, None on failure. The most recent
@@ -2640,45 +2653,43 @@ def _download_cwicr_from_github_sync(db_id: str) -> Path | None:
         )
         return None
 
-    url = f"{_GITHUB_CWICR_BASE_URL}/{github_path}"
+    hf_url = f"{_HF_CWICR_PARQUET_BASE_URL}/{_cwicr_hf_parquet_relpath(github_path)}"
+    github_url = f"{_GITHUB_CWICR_BASE_URL}/{github_path}"
     cache_dir = _CWICR_CACHE_DIR
     cache_dir.mkdir(parents=True, exist_ok=True)
     local_path = cache_dir / f"{db_id}.parquet"
 
-    # No-cache mode: always re-download. Any leftover from a previous run
-    # (whole or partial) is wiped before the fetch so we never serve stale
-    # bytes or get stuck behind a 0-byte file. The caller in
-    # ``load_cwicr_database`` removes the file again after processing,
-    # keeping the cache directory empty.
     if local_path.exists():
         local_path.unlink(missing_ok=True)
 
-    logger.info("Downloading CWICR %s from GitHub: %s", db_id, url)
-    try:
-        _download_to_file(url, local_path)
-        if local_path.exists() and local_path.stat().st_size > 1000:
-            logger.info("Downloaded CWICR %s: %d bytes", db_id, local_path.stat().st_size)
-            _LAST_DOWNLOAD_ERROR.pop(db_id, None)
-            return local_path
-        size = local_path.stat().st_size if local_path.exists() else 0
-        logger.warning(
-            "Downloaded file too small or missing: %s (%d bytes)",
-            local_path,
-            size,
-        )
-        _LAST_DOWNLOAD_ERROR[db_id] = (
-            f"GitHub download for '{db_id}' returned {size} bytes (expected ≥ 1 KB). "
-            f"URL: {url}. Likely upstream 404 or proxy strip — try re-checking "
-            f"https://github.com/datadrivenconstruction/OpenConstructionEstimate-DDC-CWICR "
-            f"is reachable from this network."
-        )
-        local_path.unlink(missing_ok=True)
-        return None
-    except Exception as exc:
-        logger.warning("Failed to download CWICR %s from GitHub: %s", db_id, exc)
-        _LAST_DOWNLOAD_ERROR[db_id] = f"GitHub download failed: {exc.__class__.__name__}: {exc}. URL: {url}"
-        local_path.unlink(missing_ok=True)
-        return None
+    errors: list[str] = []
+    for label, url in (("HuggingFace", hf_url), ("GitHub", github_url)):
+        logger.info("Downloading CWICR %s from %s: %s", db_id, label, url)
+        try:
+            _download_to_file(url, local_path, timeout=600.0)
+            if local_path.exists() and local_path.stat().st_size > 1000:
+                logger.info(
+                    "Downloaded CWICR %s from %s: %d bytes",
+                    db_id,
+                    label,
+                    local_path.stat().st_size,
+                )
+                _LAST_DOWNLOAD_ERROR.pop(db_id, None)
+                return local_path
+            size = local_path.stat().st_size if local_path.exists() else 0
+            errors.append(f"{label}: file too small ({size} bytes)")
+            local_path.unlink(missing_ok=True)
+        except Exception as exc:
+            logger.warning("Failed to download CWICR %s from %s: %s", db_id, label, exc)
+            errors.append(f"{label}: {exc.__class__.__name__}: {exc}")
+            local_path.unlink(missing_ok=True)
+
+    _LAST_DOWNLOAD_ERROR[db_id] = (
+        f"Download failed for '{db_id}'. "
+        + "; ".join(errors)
+        + f". HF URL: {hf_url}"
+    )
+    return None
 
 
 async def _download_cwicr_from_github(db_id: str) -> Path | None:

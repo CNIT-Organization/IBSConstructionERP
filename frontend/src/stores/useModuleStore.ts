@@ -11,19 +11,22 @@
 import { create } from 'zustand';
 import { getModuleDefaults, getModuleDependents, getModuleDependencies } from '@/modules/_registry';
 import { apiGet, apiPatch } from '@/shared/lib/api';
+import {
+  isCivilCoreDemo,
+  isModuleHiddenInCivilCoreDemo,
+  setCivilCoreDemoFromServer,
+} from '@/shared/lib/civilcoreDemo';
 
 const STORE_KEY = 'oe_enabled_modules';
 
 /** Modules that are ALWAYS shown in sidebar — cannot be disabled. */
-const CORE_MODULES = new Set([
-  'dashboard',
-  'ai-estimate',
-  'projects',
-  'boq',
-  'costs',
-  'settings',
-  'modules',
-]);
+function buildCoreModules(): Set<string> {
+  const keys = ['dashboard', 'projects', 'boq', 'costs', 'settings', 'modules'];
+  if (!isCivilCoreDemo()) {
+    keys.splice(1, 0, 'ai-estimate');
+  }
+  return new Set(keys);
+}
 
 /** Optional modules with their default enabled state. */
 const OPTIONAL_DEFAULTS: Record<string, boolean> = {
@@ -80,6 +83,10 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null;
 /* ── Store interface ──────────────────────────────────────────────────── */
 
 interface ModuleStore {
+  /** True when CivilCore demo profile is active (env and/or /api/health). */
+  civilCoreDemo: boolean;
+  setCivilCoreDemo: (enabled: boolean) => void;
+
   enabledModules: Record<string, boolean>;
   isModuleEnabled: (moduleKey: string) => boolean;
   setModuleEnabled: (moduleKey: string, enabled: boolean) => void;
@@ -100,15 +107,23 @@ interface ModuleStore {
 }
 
 export const useModuleStore = create<ModuleStore>((set, get) => ({
+  civilCoreDemo: isCivilCoreDemo(),
+  setCivilCoreDemo: (enabled: boolean) => {
+    setCivilCoreDemoFromServer(enabled);
+    set({ civilCoreDemo: enabled || isCivilCoreDemo() });
+  },
+
   enabledModules: readState(),
 
   isModuleEnabled: (key: string) => {
-    if (CORE_MODULES.has(key)) return true;
+    if (isModuleHiddenInCivilCoreDemo(key)) return false;
+    if (buildCoreModules().has(key)) return true;
     return get().enabledModules[key] ?? true;
   },
 
   setModuleEnabled: (key: string, enabled: boolean) => {
-    if (CORE_MODULES.has(key)) return; // Can't disable core
+    if (buildCoreModules().has(key)) return; // Can't disable core
+    if (isModuleHiddenInCivilCoreDemo(key)) return;
     set((state) => {
       const next = { ...state.enabledModules, [key]: enabled };
       try {
@@ -134,7 +149,8 @@ export const useModuleStore = create<ModuleStore>((set, get) => ({
   },
 
   canDisable: (moduleKey: string) => {
-    if (CORE_MODULES.has(moduleKey)) return { allowed: false, blockedBy: [] };
+    if (buildCoreModules().has(moduleKey)) return { allowed: false, blockedBy: [] };
+    if (isModuleHiddenInCivilCoreDemo(moduleKey)) return { allowed: false, blockedBy: [] };
     const enabledDeps = get().getEnabledDependents(moduleKey);
     return { allowed: enabledDeps.length === 0, blockedBy: enabledDeps };
   },
@@ -176,4 +192,10 @@ export const useModuleStore = create<ModuleStore>((set, get) => ({
   },
 }));
 
-export { CORE_MODULES };
+/** Core module keys for gating (respects CivilCore demo profile). */
+export function getCoreModuleKeys(): Set<string> {
+  return buildCoreModules();
+}
+
+/** @deprecated Use getCoreModuleKeys() — kept for existing imports. */
+export const CORE_MODULES = buildCoreModules();

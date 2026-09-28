@@ -57,6 +57,11 @@ ROLE_ALIASES: dict[str, Role] = {
     "owner": Role.ADMIN,
     "readonly": Role.VIEWER,
     "guest": Role.VIEWER,
+    # PWD Delhi Works Estimating demo wings (NOT GNCTD prod RBAC).
+    # Persist as user.role so JWT `role` claim drives the frontend gates;
+    # permission checks resolve to EDITOR.
+    "planning": Role.EDITOR,
+    "engineer": Role.EDITOR,
 }
 
 

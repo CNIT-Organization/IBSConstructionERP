@@ -11,11 +11,13 @@ import {
 } from 'lucide-react';
 import { Card, Button, Badge } from '@/shared/ui';
 import { APP_VERSION } from '@/shared/lib/version';
+import { getAppDisplayName, getGithubRepoUrl, getProductWebsiteUrl } from '@/shared/lib/appBranding';
 import { UpdateNotification } from '@/shared/ui/UpdateChecker';
 import { Changelog } from './Changelog';
 
 export function AboutPage() {
   const { t } = useTranslation();
+  const appName = getAppDisplayName();
 
   return (
     <div className="max-w-3xl mx-auto space-y-6 animate-fade-in">
@@ -28,13 +30,13 @@ export function AboutPage() {
       {/* Header */}
       <div className="text-center py-6">
         <a
-          href="https://openconstructionerp.com?utm_source=app&utm_medium=about"
+          href={getProductWebsiteUrl()}
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center gap-1.5 text-xs font-semibold text-oe-blue hover:text-oe-blue-dark transition-colors mb-4"
         >
           <Globe size={13} />
-          openconstructionerp.com
+          {getProductWebsiteUrl().replace(/^https?:\/\//, '').replace(/\/$/, '')}
           <ExternalLink size={11} />
         </a>
         <div className="flex items-center justify-center gap-2 mb-4">
@@ -44,7 +46,7 @@ export function AboutPage() {
           </span>
           <span className="text-xs font-semibold uppercase tracking-widest text-emerald-600">Open Source</span>
         </div>
-        <h1 className="text-3xl font-bold text-content-primary tracking-tight">OpenConstructionERP</h1>
+        <h1 className="text-3xl font-bold text-content-primary tracking-tight">{appName}</h1>
         <p className="mt-2 text-base text-content-secondary">
           {t('about.tagline', { defaultValue: 'The #1 open-source platform for construction cost estimation‌⁠‍' })}
         </p>
@@ -499,7 +501,7 @@ export function AboutPage() {
                   <Handshake size={18} className="text-oe-blue" />
                 </div>
                 <h2 className="text-2xl font-bold tracking-tight text-content-primary">
-                  {t('about.support_title', { defaultValue: 'Support OpenConstructionERP' })}
+                  {t('about.support_title', { defaultValue: `Support ${appName}` })}
                 </h2>
               </div>
               <p className="text-sm text-content-secondary leading-relaxed max-w-xl mx-auto">
@@ -511,7 +513,7 @@ export function AboutPage() {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-px bg-border-light/60 dark:bg-white/[0.06]">
               {/* Star on GitHub */}
               <a
-                href="https://github.com/datadrivenconstruction/OpenConstructionERP"
+                href={getGithubRepoUrl()}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="group relative flex flex-col items-center gap-2 bg-surface-primary/80 backdrop-blur-sm px-5 py-6 hover:bg-amber-50/70 dark:hover:bg-amber-900/15 transition-colors"

@@ -33,6 +33,8 @@ import {
 } from 'lucide-react';
 import { projectsApi, type Project } from '@/features/projects/api';
 import { boqApi, type BOQ } from '@/features/boq/api';
+import { isCivilCoreDemo, isRouteHiddenInCivilCoreDemo } from '@/shared/lib/civilcoreDemo';
+import { useModuleStore } from '@/stores/useModuleStore';
 import { apiGet } from '@/shared/lib/api';
 
 /* ── Types ─────────────────────────────────────────────────────────────── */
@@ -190,6 +192,15 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const [globalResults, setGlobalResults] = useState<GlobalSearchResult[]>([]);
   const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
   const globalSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const civilCoreDemo = useModuleStore((s) => s.civilCoreDemo);
+
+  const pageResults = useMemo(() => {
+    const hideAi = civilCoreDemo || isCivilCoreDemo();
+    if (!hideAi) return PAGE_RESULTS;
+    return PAGE_RESULTS.filter(
+      (page) => !page.path || !isRouteHiddenInCivilCoreDemo(page.path),
+    );
+  }, [civilCoreDemo]);
 
   // Debounced global search — fires 300ms after user stops typing
   useEffect(() => {
@@ -314,7 +325,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       // Show all pages
       groups.push({
         title: t('command_palette.pages', { defaultValue: 'Pages' }),
-        items: PAGE_RESULTS,
+        items: pageResults,
       });
 
       // Show recent projects (top 5 from API)
@@ -355,7 +366,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
     }
 
     // Filter pages
-    const matchingPages = PAGE_RESULTS.filter((page) => {
+    const matchingPages = pageResults.filter((page) => {
       const label = page.labelKey ? t(page.labelKey).toLowerCase() : '';
       return label.includes(lowerQuery);
     });
@@ -448,7 +459,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
     }
 
     return groups;
-  }, [query, projects, boqs, globalResults, t]);
+  }, [query, projects, boqs, globalResults, pageResults, t]);
 
   // Flat list for keyboard navigation
   const flatResults = useMemo(() => results.flatMap((g) => g.items), [results]);

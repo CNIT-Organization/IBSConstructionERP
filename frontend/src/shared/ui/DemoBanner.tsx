@@ -15,6 +15,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import { getAppDisplayName, getGithubRepoUrl } from '@/shared/lib/appBranding';
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, X, Download, ExternalLink } from 'lucide-react';
 
@@ -110,7 +111,7 @@ export function DemoBanner() {
               <p>
                 You're looking at the public hosted demo of{' '}
                 <strong className="text-content-primary">
-                  OpenConstructionERP
+                  {getAppDisplayName()}
                 </strong>
                 . It runs on a single small VPS and is shared with everyone in
                 the world who clicks the demo link, so:
@@ -165,7 +166,7 @@ export function DemoBanner() {
             {/* Footer */}
             <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-border-light">
               <a
-                href="https://github.com/datadrivenconstruction/OpenConstructionERP"
+                href={getGithubRepoUrl()}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-content-secondary hover:text-content-primary border border-border-light rounded-lg hover:bg-surface-secondary transition-colors"

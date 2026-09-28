@@ -1,0 +1,24 @@
+# Configurable India rate-pack manifests (no embedded rates in Python).
+# Seed CSV: data/catalog/regions/PWD_DELHI_DSR_seed.csv
+# (mirrored for DE UI at frontend/src/features/estimates/data/PWD_DELHI_DSR_seed.csv)
+
+rate_packs:
+  - id: PWD_DELHI_DSR
+    name: PWD Delhi — Schedule of Rates (DSR)
+    authority: Public Works Department, Government of NCT of Delhi
+    status: seeded_sample
+    description: >
+      Delhi Schedule of Rates reference pack. Sample CPWD/Delhi DSR seed is
+      loaded from catalog CSV for officer demos; replace with official PWD Delhi
+      schedule when provided. Rates are not hard-coded in oe_india_pack or oe_boq core.
+    catalog_manifest: data/catalog/regions/PWD_DELHI_DSR_seed.csv
+    catalog_glob: data/catalog/regions/PWD_DELHI_DSR_*.csv
+    fallback_cwicr_region: HI_MUMBAI
+    notes: |
+      Source label: Sample CPWD/Delhi DSR seed — replace with official PWD Delhi
+      schedule when provided; not for tender award. Not an official GNCTD / PWD
+      Delhi / CPWD publication. Frontend DE editor loads the same seed via
+      frontend/src/features/estimates/data/. Officers (Engineer wing) can import
+      CSV or Excel (.xlsx) from the DE page; imported catalog persists in
+      browser localStorage (pwd_delhi_dsr_catalog_v1) for MVP — not a server
+      upload. Legacy .xls: convert to .xlsx/CSV first.

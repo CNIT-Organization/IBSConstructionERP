@@ -2,12 +2,14 @@ import { Suspense, lazy, useState, useCallback, useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AppLayout } from './layout';
 import { DashboardPage } from '@/features/dashboard';
-import { LoginPage, LoginPageNext, RegisterPage, ForgotPasswordPage } from '@/features/auth';
+import { LoginPage, LoginPageNext, PwdDelhiLoginPage, RegisterPage, ForgotPasswordPage } from '@/features/auth';
 import { ProjectsPage, CreateProjectPage, ProjectDetailPage, ProjectSettingsPage } from '@/features/projects';
 import { BOQListPage, CreateBOQPage, TemplatesPage } from '@/features/boq';
+import { DEEditorPage, EstimateRegisterPage, PEWizardPage } from '@/features/estimates';
 import { syncCustomUnitsFromServer } from '@/features/boq/boqHelpers';
 import { CostsPage, ImportDatabasePage } from '@/features/costs';
 import { OnboardingWizard } from '@/features/onboarding';
+import { getBuildAttributionLine } from '@/shared/lib/appBranding';
 import { AssembliesPage, AssemblyEditorPage, CreateAssemblyPage } from '@/features/assemblies';
 import { ValidationPage } from '@/features/validation';
 import { NlRuleBuilderPanel } from '@/features/compliance';
@@ -30,6 +32,8 @@ import { useKeyboardShortcuts } from '@/shared/hooks/useKeyboardShortcuts';
 import { useTranslation } from 'react-i18next';
 import { getLanguageByCode } from './i18n';
 import { initErrorLogger } from '@/shared/lib/errorLogger';
+import { syncCivilCoreDemoFromHealth, isCivilCoreDemo } from '@/shared/lib/civilcoreDemo';
+import { useModuleStore } from '@/stores/useModuleStore';
 
 // Lazy-loaded heavy pages — code-split into separate chunks
 const BOQEditorPage = lazy(() =>
@@ -407,7 +411,14 @@ function useDocumentDirection() {
 
 export default function App() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const setCivilCoreDemo = useModuleStore((s) => s.setCivilCoreDemo);
   useDocumentDirection();
+
+  useEffect(() => {
+    void syncCivilCoreDemoFromHealth().then((enabled) => {
+      if (enabled) setCivilCoreDemo(true);
+    });
+  }, [setCivilCoreDemo]);
 
   // DDC-CWICR-OE integrity verification
   if (typeof window !== 'undefined') {
@@ -442,7 +453,7 @@ export default function App() {
         <Route path="/share/:token" element={<SharePage />} />
 
         {/* Auth — public */}
-        <Route path="/login" element={isAuthenticated ? <Navigate to="/" replace /> : <LoginPage />} />
+        <Route path="/login" element={isAuthenticated ? <Navigate to="/" replace /> : (isCivilCoreDemo() ? <PwdDelhiLoginPage /> : <LoginPage />)} />
         <Route path="/login-next" element={isAuthenticated ? <Navigate to="/" replace /> : <LoginPageNext />} />
         <Route path="/register" element={isAuthenticated ? <Navigate to="/" replace /> : <RegisterPage />} />
         <Route path="/forgot-password" element={isAuthenticated ? <Navigate to="/" replace /> : <ForgotPasswordPage />} />
@@ -618,7 +629,13 @@ export default function App() {
             day-works, instructions, time-impact analysis. */}
         <Route path="/variations" element={<P title="Variations"><VariationsPage /></P>} />
         <Route path="/projects/:projectId/variations" element={<P title="Variations"><VariationsPage /></P>} />
-        <Route path="/estimates" element={<Navigate to="/boq" replace />} />
+        {/* PWD Phase A+: Estimate register + PE wizard + DE editor. */}
+        <Route path="/estimates" element={<P title="Estimate Register"><EstimateRegisterPage /></P>} />
+        <Route path="/estimates/register" element={<P title="Estimate Register"><EstimateRegisterPage /></P>} />
+        <Route path="/estimates/pe" element={<P title="Preliminary Estimate"><PEWizardPage /></P>} />
+        <Route path="/estimates/pe/:estimateId" element={<P title="Preliminary Estimate"><PEWizardPage /></P>} />
+        <Route path="/estimates/de" element={<P title="Detailed Estimate"><DEEditorPage /></P>} />
+        <Route path="/estimates/:estimateId/de" element={<P title="Detailed Estimate"><DEEditorPage /></P>} />
         <Route path="/profile" element={<Navigate to="/settings" replace />} />
         <Route path="/notifications" element={<P title="Notifications"><NotificationsPage /></P>} />
 
@@ -633,7 +650,7 @@ export default function App() {
       {/* DDC-CWICR-OE */}
       <span aria-hidden="true" style={{ position: 'absolute', width: 0, height: 0, overflow: 'hidden' }}>
         {'\u200B\u200C\u200D\u200B\u200C\u200D\u200B'}
-        DataDrivenConstruction·CWICR·OpenConstructionERP·2026
+        {getBuildAttributionLine()}
       </span>
     </Suspense>
   );

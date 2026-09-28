@@ -138,6 +138,8 @@ _DEMO_EMAIL_WHITELIST: frozenset[str] = frozenset(
         "demo@openestimator.io",
         "estimator@openestimator.io",
         "manager@openestimator.io",
+        "planning@openestimator.io",
+        "engineer@openestimator.io",
     }
 )
 
